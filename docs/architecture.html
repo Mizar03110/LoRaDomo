@@ -1,0 +1,231 @@
+<h1 id="architecture">Architecture</h1>
+<h2 id="overview">Overview</h2>
+<p>LoRaDomo implements a <strong>star topology</strong> LoRa network where a single gateway connects multiple nodes. The gateway bridges the LoRa network to WiFi/MQTT, making sensor data available to any home automation controller.</p>
+<pre><code>┌─────────────┐     LoRa      ┌──────────────────────────────────┐
+│   <span class="hljs-keyword">Node</span> <span class="hljs-title">1</span>    │ ←──────────→  │                                  │
+│  (sensors)  │               │           Gateway                │   WiFi/MQTT
+├─────────────┤               │        (Heltec V3)               │ ──────────→  MQTT Broker
+│   <span class="hljs-keyword">Node</span> <span class="hljs-title">2</span>    │ ←──────────→  │                                  │              Home Assistant
+│  (sensors)  │               │  - LoRa receiver                 │              <span class="hljs-keyword">Node</span><span class="hljs-title">-RED</span>...
+├─────────────┤               │  - MQTT publisher                │
+│   <span class="hljs-keyword">Node</span> <span class="hljs-title">N</span>    │ ←──────────→  │  - Web UI (port <span class="hljs-number">80</span>)              │
+│  (sensors)  │               │  - WebSocket (port <span class="hljs-number">81</span>)           │
+└─────────────┘               └──────────────────────────────────┘
+</code></pre><hr>
+<h2 id="class-hierarchy">Class Hierarchy</h2>
+<pre><code>LoRaNode  (base <span class="hljs-class"><span class="hljs-keyword">class</span>)
+    │
+    └── <span class="hljs-title">LoRaGateway</span>  (<span class="hljs-keyword">extends</span> <span class="hljs-title">LoRaNode</span>)</span>
+</code></pre><p><code>LoRaNode</code> handles all LoRa communication, the registration state machine, sensor management, heartbeat, and actuator reception.</p>
+<p><code>LoRaGateway</code> extends <code>LoRaNode</code> with WiFi, MQTT, WebSocket UI, NVS persistence, and node/sensor registry management.</p>
+<hr>
+<h2 id="node-state-machine">Node State Machine</h2>
+<p>Every node goes through three states before it can send sensor data:</p>
+<pre><code>  Power <span class="hljs-keyword">on</span>
+      │
+      ▼
+┌─────────────────┐   MSG_NODE_PRESENT (<span class="hljs-keyword">every</span> <span class="hljs-number">5</span>s)
+│  UNREGISTERED   │ ─────────────────────────────→  Gateway
+│                 │ ←─────────────────────────────  MSG_ACK_NODE
+└────────┬────────┘
+         │ ACK received
+         ▼
+┌─────────────────┐   MSG_SENSOR_PRESENT (per sensor, <span class="hljs-keyword">every</span> <span class="hljs-number">5</span>s)
+│  REGISTERING    │ ─────────────────────────────→  Gateway
+│                 │ ←─────────────────────────────  MSG_ACK_SENSOR
+└────────┬────────┘
+         │ All sensors acked
+         ▼
+┌─────────────────┐   MSG_SENSOR  (<span class="hljs-keyword">on</span> interval <span class="hljs-keyword">or</span> change)
+│   REGISTERED    │ ─────────────────────────────→  Gateway
+│                 │   MSG_HEARTBEAT (<span class="hljs-keyword">every</span> <span class="hljs-number">2</span> min)  →  Gateway
+│                 │ ←─────────────────────────────  MSG_ACTUATOR
+└─────────────────┘
+</code></pre><p><strong>UNREGISTERED</strong>: The node broadcasts <code>MSG_NODE_PRESENT</code> every 5 seconds until the gateway responds with <code>MSG_ACK_NODE</code>.</p>
+<p><strong>REGISTERING</strong>: The node presents each sensor one by one with <code>MSG_SENSOR_PRESENT</code>. The gateway responds with <code>MSG_ACK_SENSOR</code> for each. If a sensor does not receive an ACK within 5 seconds, it is retried. A failed sensor does not block others.</p>
+<p><strong>REGISTERED</strong>: Normal operation. The node sends sensor values automatically and listens for actuator commands. On first entering this state, it sends a heartbeat and all sensor values immediately.</p>
+<hr>
+<h2 id="registration-protocol">Registration Protocol</h2>
+<p>The inclusion mechanism ensures that:</p>
+<ul>
+<li>A <strong>node cannot send sensor data</strong> before it is registered</li>
+<li>A <strong>sensor cannot receive commands</strong> before its node is registered</li>
+<li>The network key (hashed) acts as <strong>shared secret</strong> — frames with a wrong key are silently discarded</li>
+<li>Registration is <strong>non-blocking</strong> — the node continues to loop() normally during the process</li>
+</ul>
+<p>When the <strong>gateway reboots</strong>, it broadcasts <code>MSG_GATEWAY_BOOT</code>. All nodes receive this and reset to <code>UNREGISTERED</code>, re-registering automatically. The gateway reloads its node/sensor registry from NVS (flash) so it already knows the node names and sensor definitions before they re-register.</p>
+<hr>
+<h2 id="frame-structure">Frame Structure</h2>
+<p>Every LoRa frame starts with a fixed header:</p>
+<pre><code>┌──────────┬──────────┬──────────────┬───────────┬───────────┬──────────┐
+│ <span class="hljs-built_in">version</span>  │  type    │   nodeID     │ messageID │   flags   │   key    │
+│  <span class="hljs-number">1</span> <span class="hljs-keyword">byte</span>  │  <span class="hljs-number">1</span> <span class="hljs-keyword">byte</span>  │   <span class="hljs-number">4</span> <span class="hljs-keyword">bytes</span>    │  <span class="hljs-number">1</span> <span class="hljs-keyword">byte</span>   │  <span class="hljs-number">1</span> <span class="hljs-keyword">byte</span>   │  <span class="hljs-number">2</span> <span class="hljs-keyword">bytes</span> │
+└──────────┴──────────┴──────────────┴───────────┴───────────┴──────────┘
+</code></pre><ul>
+<li><code>version</code>: protocol version (currently 1)</li>
+<li><code>type</code>: message type (see table below)</li>
+<li><code>nodeID</code>: ESP32 chip ID (lower 32 bits of EFuse MAC), unique per device</li>
+<li><code>messageID</code>: rolling counter, used for ACK matching</li>
+<li><code>flags</code>: <code>FLAG_ACK_REQ</code> (0x01) when an ACK is expected</li>
+<li><code>key</code>: FNV-1a 16-bit hash of the network key string</li>
+</ul>
+<h3 id="message-types">Message Types</h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Name</th>
+<th>Direction</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0x01</td>
+<td>MSG_NODE_PRESENT</td>
+<td>Node → GW</td>
+<td>Node announces itself</td>
+</tr>
+<tr>
+<td>0x02</td>
+<td>MSG_ACK_NODE</td>
+<td>GW → Node</td>
+<td>Gateway acknowledges node</td>
+</tr>
+<tr>
+<td>0x03</td>
+<td>MSG_SENSOR_PRESENT</td>
+<td>Node → GW</td>
+<td>Node announces a sensor</td>
+</tr>
+<tr>
+<td>0x04</td>
+<td>MSG_ACK_SENSOR</td>
+<td>GW → Node</td>
+<td>Gateway acknowledges sensor</td>
+</tr>
+<tr>
+<td>0x05</td>
+<td>MSG_SENSOR</td>
+<td>Node → GW</td>
+<td>Sensor value</td>
+</tr>
+<tr>
+<td>0x06</td>
+<td>MSG_HEARTBEAT</td>
+<td>Node → GW</td>
+<td>Battery + uptime</td>
+</tr>
+<tr>
+<td>0x07</td>
+<td>MSG_ACK</td>
+<td>Internal</td>
+<td>Generic ACK</td>
+</tr>
+<tr>
+<td>0x08</td>
+<td>MSG_REBOOT</td>
+<td>GW → Node</td>
+<td>Reboot command</td>
+</tr>
+<tr>
+<td>0x09</td>
+<td>MSG_ACTUATOR</td>
+<td>GW → Node</td>
+<td>Set sensor/actuator value</td>
+</tr>
+<tr>
+<td>0x0A</td>
+<td>MSG_ACK_ACTUATOR</td>
+<td>Node → GW</td>
+<td>Acknowledge actuator</td>
+</tr>
+<tr>
+<td>0x0B</td>
+<td>MSG_GATEWAY_BOOT</td>
+<td>GW → All</td>
+<td>Gateway has rebooted</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="heartbeat">Heartbeat</h2>
+<p>Every node in <code>REGISTERED</code> state sends a <code>MSG_HEARTBEAT</code> every 2 minutes (configurable via <code>_heartbeatInterval</code>). The heartbeat carries:</p>
+<ul>
+<li><strong>nodeID</strong>: the sender</li>
+<li><strong>battery</strong>: 0–100% (set by user code via <code>_battery</code>)</li>
+<li><strong>uptime</strong>: <code>millis()</code> in ms — time since last node boot</li>
+</ul>
+<p>The gateway uses the uptime value to display the &quot;online since&quot; duration in the web UI. It also publishes the battery level to MQTT at <code>&lt;gateway&gt;/OUT/&lt;node&gt;/battery</code>.</p>
+<p>If a node does not send any frame for <strong>5 minutes</strong>, the gateway marks it as offline and publishes its status as <code>0</code>.</p>
+<hr>
+<h2 id="sensor-auto-send">Sensor Auto-Send</h2>
+<p>Each sensor has an independent send interval (in seconds):</p>
+<ul>
+<li><code>sendInterval &gt; 0</code>: the node automatically sends the sensor value every N seconds. If a <strong>read callback</strong> is registered, it is called just before each send to fetch a fresh value from the hardware.</li>
+<li><code>sendInterval == 0</code>: the value is only sent when it changes, i.e. when <code>sendInt8()</code>, <code>sendInt32()</code>, or <code>sendFloat()</code> is called explicitly.</li>
+</ul>
+<p>On first entering <code>REGISTERED</code> state, <strong>all sensors with a stored value</strong> are sent immediately regardless of their interval.</p>
+<hr>
+<h2 id="actuator-flow">Actuator Flow</h2>
+<p>When the home automation controller wants to send a value to a node (e.g. turn on a relay):</p>
+<pre><code>Controller  →  MQTT Broker  →  Gateway  →  LoRa  →  Node
+   publish         <span class="hljs-string">|           subscribe           receive</span>
+ IN/&lt;node&gt;/&lt;s&gt;     <span class="hljs-string">|           IN/#                MSG_ACTUATOR</span>
+                   <span class="hljs-string">|                               callback()</span>
+                   <span class="hljs-string">|                               sendInt8()  (confirm)</span>
+                   <span class="hljs-string">|           receive             MSG_SENSOR</span>
+                   <span class="hljs-string">|           publish</span>
+                   <span class="hljs-string">|         OUT/&lt;node&gt;/&lt;s&gt;</span>
+</code></pre><p>The gateway retries the actuator frame up to <strong>3 times</strong> (every 5 seconds) if the node does not respond with <code>MSG_ACK_ACTUATOR</code>. After 3 failed attempts, the message is silently dropped and logged (debug mode).</p>
+<hr>
+<h2 id="nvs-persistence">NVS Persistence</h2>
+<p>The gateway stores its node and sensor registry in the ESP32 <strong>NVS</strong> (Non-Volatile Storage) flash partition. This means node names and sensor definitions survive a gateway reboot without requiring the nodes to re-present themselves.</p>
+<p>Stored per node: ID, name, sensor count.
+Stored per sensor: ID, data type, name.</p>
+<p>Dynamic data (last sensor values, battery, online/offline durations) is <strong>not persisted</strong> — it is refreshed from the nodes after reboot via the <code>MSG_GATEWAY_BOOT</code> broadcast.</p>
+<hr>
+<h2 id="security">Security</h2>
+<p>Security is based on a <strong>shared network key</strong>. The key string is hashed with FNV-1a into a 16-bit value stored in every frame header. Frames with a non-matching key are silently discarded by all receivers.</p>
+<p>This provides basic network isolation (multiple LoRaDomo networks can coexist on the same frequency) but is <strong>not cryptographic encryption</strong>. Do not use this library for sensitive or safety-critical applications without adding application-level encryption.</p>
+<hr>
+<h2 id="lora-radio-parameters">LoRa Radio Parameters</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Frequency</td>
+<td>868.0 MHz (Europe)</td>
+</tr>
+<tr>
+<td>Bandwidth</td>
+<td>125 kHz</td>
+</tr>
+<tr>
+<td>Coding rate</td>
+<td>4/5</td>
+</tr>
+<tr>
+<td>Spreading factor</td>
+<td>7 (SF128)</td>
+</tr>
+<tr>
+<td>TX power</td>
+<td>13 dBm</td>
+</tr>
+<tr>
+<td>TCXO voltage</td>
+<td>3.3 V</td>
+</tr>
+<tr>
+<td>TCXO delay</td>
+<td>100 µs</td>
+</tr>
+</tbody>
+</table>
+<p>These parameters are fixed for Heltec V3 and defined in <code>LoRaNode.h</code>. All nodes and the gateway must use the same parameters — they do by using the same library.</p>

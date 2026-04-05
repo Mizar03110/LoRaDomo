@@ -1,0 +1,416 @@
+<h1 id="api-reference">API Reference</h1>
+<h2 id="loranode">LoRaNode</h2>
+<p>Include with <code>#include &quot;LoRaNode.h&quot;</code>.</p>
+<hr>
+<h3 id="-begin-"><code>begin()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">begin</span><span class="hljs-params">(<span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* key, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* nodeName, <span class="hljs-keyword">bool</span> debug = <span class="hljs-literal">false</span>)</span></span>;
+</code></pre>
+<p>Initializes the radio and starts the registration state machine.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>key</code></td>
+<td><code>const char*</code></td>
+<td>Shared network key. Must match the gateway key. The string is hashed internally — any length is accepted.</td>
+</tr>
+<tr>
+<td><code>nodeName</code></td>
+<td><code>const char*</code></td>
+<td>Human-readable node name, max 15 characters. Used as MQTT topic segment and displayed in the web UI.</td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td><code>bool</code></td>
+<td>Enable serial debug output. Default <code>false</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Call once in <code>setup()</code>, before <code>addSensor()</code>.</p>
+<hr>
+<h3 id="-addsensor-"><code>addSensor()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">bool</span> <span class="hljs-title">addSensor</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span>      sensorID,
+               DataType     type,
+               <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>*  name,
+               <span class="hljs-keyword">uint32_t</span>     sendInterval = <span class="hljs-number">0</span>,
+               <span class="hljs-keyword">void</span>*        actCallback  = <span class="hljs-literal">nullptr</span>,
+               <span class="hljs-keyword">void</span>*        readCallback = <span class="hljs-literal">nullptr</span>)</span></span>;
+</code></pre>
+<p>Registers a sensor with the node. Must be called in <code>setup()</code> after <code>begin()</code>, before the first <code>loop()</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sensorID</code></td>
+<td><code>uint8_t</code></td>
+<td>Unique sensor identifier within this node (1–255).</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td><code>DataType</code></td>
+<td>Data type: <code>TYPE_INT8</code>, <code>TYPE_INT32</code>, or <code>TYPE_FLOAT</code>.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>const char*</code></td>
+<td>Sensor name, max 15 characters. Used as MQTT topic segment.</td>
+</tr>
+<tr>
+<td><code>sendInterval</code></td>
+<td><code>uint32_t</code></td>
+<td>Automatic send interval in <strong>seconds</strong>. <code>0</code> = send on change only. Default <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>actCallback</code></td>
+<td><code>void*</code></td>
+<td>Actuator callback (cast to <code>void*</code>). Called when gateway sends a value. <code>nullptr</code> if not needed.</td>
+</tr>
+<tr>
+<td><code>readCallback</code></td>
+<td><code>void*</code></td>
+<td>Read callback (cast to <code>void*</code>). Called just before each automatic send. <code>nullptr</code> if not needed.</td>
+</tr>
+</tbody>
+</table>
+<p>Returns <code>false</code> if the sensor table is full (<code>MAX_SENSORS = 10</code>).</p>
+<p><strong>Callback signatures:</strong></p>
+<pre><code class="lang-cpp"><span class="hljs-comment">// Actuator callbacks — called when gateway sends a value</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">myActInt8</span> <span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int8_t</span>  value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">myActInt32</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int32_t</span> value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">myActFloat</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">float</span>   value)</span></span>;
+
+<span class="hljs-comment">// Read callbacks — called before each send, return current value</span>
+<span class="hljs-keyword">int8_t</span>  myReadInt8 ();
+<span class="hljs-keyword">int32_t</span> myReadInt32();
+<span class="hljs-function"><span class="hljs-keyword">float</span>   <span class="hljs-title">myReadFloat</span><span class="hljs-params">()</span></span>;
+</code></pre>
+<p>Pass them cast to <code>void*</code>:</p>
+<pre><code class="lang-cpp"><span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(<span class="hljs-number">1</span>, TYPE_FLOAT, <span class="hljs-string">"temperature"</span>, <span class="hljs-number">30</span>, nullptr, (void*)myReadFloat);
+<span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(<span class="hljs-number">2</span>, TYPE_INT8,  <span class="hljs-string">"relay"</span>,        <span class="hljs-number">0</span>, (void*)myActInt8, nullptr);
+</code></pre>
+<hr>
+<h3 id="-setsensorint8-setsensorint32-setsensorfloat-"><code>setSensorInt8()</code> / <code>setSensorInt32()</code> / <code>setSensorFloat()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setSensorInt8</span> <span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int8_t</span>  value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setSensorInt32</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int32_t</span> value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setSensorFloat</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">float</span>   value)</span></span>;
+</code></pre>
+<p>Pre-loads a sensor value <strong>without sending it</strong>. Use in <code>setup()</code> to restore values from EEPROM/Preferences before the node registers. The value will be sent automatically on the first <code>REGISTERED</code> burst.</p>
+<hr>
+<h3 id="-sendint8-sendint32-sendfloat-"><code>sendInt8()</code> / <code>sendInt32()</code> / <code>sendFloat()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">sendInt8</span> <span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int8_t</span>  value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">sendInt32</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">int32_t</span> value)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">sendFloat</span><span class="hljs-params">(<span class="hljs-keyword">uint8_t</span> sensorID, <span class="hljs-keyword">float</span>   value)</span></span>;
+</code></pre>
+<p>Sends a sensor value immediately. Only works when the node is in <code>REGISTERED</code> state — silently ignored otherwise. Also stores the value internally and resets the auto-send timer.</p>
+<p>Typical use: call from an actuator callback to confirm a new state, or from user code when a value changes.</p>
+<hr>
+<h3 id="-loop-"><code>loop()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">loop</span><span class="hljs-params">()</span></span>;
+</code></pre>
+<p>Must be called on every iteration of the Arduino <code>loop()</code>. Handles:</p>
+<ul>
+<li>Incoming frame reception (ACKs, actuator commands, reboot, gateway boot)</li>
+<li>Registration state machine (node present, sensor present retries)</li>
+<li>Auto-send for interval-based sensors</li>
+<li>Read callback invocation before sends</li>
+<li>Heartbeat transmission</li>
+</ul>
+<hr>
+<h3 id="protected-members-accessible-from-subclasses-">Protected members (accessible from subclasses)</h3>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_battery</code></td>
+<td><code>uint8_t</code></td>
+<td>Battery level 0–100%. Set from user code to report battery in heartbeat.</td>
+</tr>
+<tr>
+<td><code>_heartbeatInterval</code></td>
+<td><code>uint32_t</code></td>
+<td>Heartbeat interval in ms. Default 120000 (2 minutes).</td>
+</tr>
+<tr>
+<td><code>_enableHeartbeat</code></td>
+<td><code>bool</code></td>
+<td>Set to <code>false</code> to disable heartbeat. Default <code>true</code>.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h3 id="datatype-enum">DataType enum</h3>
+<pre><code class="lang-cpp"><span class="hljs-class"><span class="hljs-keyword">enum</span> <span class="hljs-title">DataType</span> : <span class="hljs-title">uint8_t</span> {</span>
+    TYPE_INT8  = <span class="hljs-number">0</span>,   <span class="hljs-regexp">//</span> int8_t  — range -<span class="hljs-number">128</span> to <span class="hljs-number">127</span>
+    TYPE_INT32 = <span class="hljs-number">1</span>,   <span class="hljs-regexp">//</span> int32_t — range -<span class="hljs-number">2147483648</span> to <span class="hljs-number">2147483647</span>
+    TYPE_FLOAT = <span class="hljs-number">2</span>    /<span class="hljs-regexp">/ float   — 32-bit IEEE 754
+};</span>
+</code></pre>
+<hr>
+<h2 id="loragateway">LoRaGateway</h2>
+<p>Include with <code>#include &quot;LoRaGateway.h&quot;</code>. Extends <code>LoRaNode</code>.</p>
+<hr>
+<h3 id="-begin-"><code>begin()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">begin</span><span class="hljs-params">(<span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* gatewayName,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* key,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* mqttServer,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* mqttUser,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* mqttPass,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* ssid,
+           <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* wifiPassword,
+           <span class="hljs-keyword">bool</span>        debug = <span class="hljs-literal">false</span>)</span></span>;
+</code></pre>
+<p>Initializes the radio, WiFi, MQTT client, WebSocket server, and loads the node registry from NVS.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gatewayName</code></td>
+<td><code>const char*</code></td>
+<td>Gateway name. Used as MQTT topic prefix and displayed in the web UI. Max 15 characters.</td>
+</tr>
+<tr>
+<td><code>key</code></td>
+<td><code>const char*</code></td>
+<td>Shared network key. Must match all nodes.</td>
+</tr>
+<tr>
+<td><code>mqttServer</code></td>
+<td><code>const char*</code></td>
+<td>MQTT broker IP address or hostname.</td>
+</tr>
+<tr>
+<td><code>mqttUser</code></td>
+<td><code>const char*</code></td>
+<td>MQTT username.</td>
+</tr>
+<tr>
+<td><code>mqttPass</code></td>
+<td><code>const char*</code></td>
+<td>MQTT password.</td>
+</tr>
+<tr>
+<td><code>ssid</code></td>
+<td><code>const char*</code></td>
+<td>WiFi network name.</td>
+</tr>
+<tr>
+<td><code>wifiPassword</code></td>
+<td><code>const char*</code></td>
+<td>WiFi password.</td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td><code>bool</code></td>
+<td>Enable serial debug output. Default <code>false</code>.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h3 id="-loop-"><code>loop()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">loop</span><span class="hljs-params">()</span></span>;
+</code></pre>
+<p>Must be called on every iteration of the Arduino <code>loop()</code>. Handles:</p>
+<ul>
+<li>WiFi and MQTT reconnection (non-blocking)</li>
+<li>HTTP and WebSocket server</li>
+<li>LoRa frame reception and dispatching</li>
+<li>Actuator retry queue</li>
+<li>Node timeout detection</li>
+<li>Offline duration updates</li>
+<li>NVS save when registry changes</li>
+</ul>
+<hr>
+<h2 id="mqtt-topics">MQTT Topics</h2>
+<p>All topics use the gateway name as prefix.</p>
+<h3 id="published-by-gateway-out-">Published by gateway (OUT)</h3>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Value</th>
+<th>Retained</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;gw&gt;/OUT/&lt;gw&gt;/status</code></td>
+<td><code>1</code> / <code>0</code></td>
+<td>Yes</td>
+<td>Gateway online (1) or offline (0). <code>0</code> is the LWT — published automatically by broker if gateway disconnects.</td>
+</tr>
+<tr>
+<td><code>&lt;gw&gt;/OUT/&lt;node&gt;/status</code></td>
+<td><code>1</code> / <code>0</code></td>
+<td>Yes</td>
+<td>Node online (1) or offline (0).</td>
+</tr>
+<tr>
+<td><code>&lt;gw&gt;/OUT/&lt;node&gt;/&lt;sensor&gt;</code></td>
+<td>number</td>
+<td>No</td>
+<td>Latest sensor value as a numeric string.</td>
+</tr>
+<tr>
+<td><code>&lt;gw&gt;/OUT/&lt;node&gt;/battery</code></td>
+<td><code>0</code>–<code>100</code></td>
+<td>No</td>
+<td>Battery level in %, published on each heartbeat.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="subscribed-by-gateway-in-">Subscribed by gateway (IN)</h3>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Payload</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;gw&gt;/IN/&lt;node&gt;/&lt;sensor&gt;</code></td>
+<td>number</td>
+<td>Send a value to a node sensor. The gateway looks up the node and sensor by name, converts the payload to the correct type, and transmits <code>MSG_ACTUATOR</code> to the node via LoRa.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="notes">Notes</h3>
+<ul>
+<li><code>&lt;gw&gt;</code> is the gateway name passed to <code>begin()</code></li>
+<li><code>&lt;node&gt;</code> is the node name passed to <code>begin()</code> on the node</li>
+<li><code>&lt;sensor&gt;</code> is the sensor name passed to <code>addSensor()</code></li>
+<li>All numeric values are published as plain text strings (e.g. <code>&quot;21.50&quot;</code>, <code>&quot;58&quot;</code>, <code>&quot;1&quot;</code>)</li>
+</ul>
+<hr>
+<h2 id="web-ui">Web UI</h2>
+<p>The gateway serves a single-page dashboard at <code>http://&lt;gateway_ip&gt;/</code>.</p>
+<p>Real-time updates are delivered via WebSocket on port 81. The UI automatically reconnects if the gateway reboots.</p>
+<h3 id="displayed-information-per-node">Displayed information per node</h3>
+<ul>
+<li>Node name and online/offline status with duration</li>
+<li>Chip ID, RSSI, SNR, battery level</li>
+<li>Per sensor: name, ID, data type, last value</li>
+</ul>
+<h3 id="actions">Actions</h3>
+<ul>
+<li><strong>Reboot</strong>: sends <code>MSG_REBOOT</code> to the node via LoRa</li>
+<li><strong>Delete</strong>: removes the node from the registry and NVS</li>
+<li><strong>Reboot gateway</strong>: restarts the ESP32</li>
+</ul>
+<hr>
+<h2 id="constants-loratypes-h-">Constants (LoRaTypes.h)</h2>
+<table>
+<thead>
+<tr>
+<th>Constant</th>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAX_NODES</code></td>
+<td>10</td>
+<td>Maximum number of nodes the gateway can manage</td>
+</tr>
+<tr>
+<td><code>MAX_SENSORS</code></td>
+<td>10</td>
+<td>Maximum sensors per node</td>
+</tr>
+<tr>
+<td><code>MAX_PENDING_ACT</code></td>
+<td>5</td>
+<td>Maximum concurrent pending actuator messages</td>
+</tr>
+<tr>
+<td><code>RETRY_MAX</code></td>
+<td>3</td>
+<td>Max retries for actuator delivery</td>
+</tr>
+<tr>
+<td><code>NAME_LEN</code></td>
+<td>15</td>
+<td>Max length for node/sensor names</td>
+</tr>
+<tr>
+<td><code>PRESENT_INTERVAL</code></td>
+<td>5000 ms</td>
+<td>Retry interval for registration frames</td>
+</tr>
+<tr>
+<td><code>ACTUATOR_RETRY_INTERVAL</code></td>
+<td>5000 ms</td>
+<td>Retry interval for actuator delivery</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="radio-constants-loranode-h-">Radio Constants (LoRaNode.h)</h2>
+<table>
+<thead>
+<tr>
+<th>Constant</th>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LORA_CS</code></td>
+<td>8</td>
+<td>SPI Chip Select pin</td>
+</tr>
+<tr>
+<td><code>LORA_DIO1</code></td>
+<td>14</td>
+<td>DIO1 interrupt pin</td>
+</tr>
+<tr>
+<td><code>LORA_BUSY</code></td>
+<td>13</td>
+<td>Busy signal pin</td>
+</tr>
+<tr>
+<td><code>LORA_RST</code></td>
+<td>12</td>
+<td>Reset pin</td>
+</tr>
+<tr>
+<td><code>LORA_FREQ</code></td>
+<td>868.0 MHz</td>
+<td>Operating frequency</td>
+</tr>
+<tr>
+<td><code>LORA_TX_DB</code></td>
+<td>13 dBm</td>
+<td>Transmit power</td>
+</tr>
+</tbody>
+</table>

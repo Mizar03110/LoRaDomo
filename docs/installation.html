@@ -1,0 +1,123 @@
+<h1 id="installation">Installation</h1>
+<h2 id="requirements">Requirements</h2>
+<h3 id="hardware">Hardware</h3>
+<p>LoRaDomo currently supports the <strong>Heltec WiFi LoRa 32 V3</strong> board, which features:</p>
+<ul>
+<li>ESP32-S3 microcontroller</li>
+<li>SX1262 LoRa transceiver (pre-wired, no external wiring needed)</li>
+<li>Built-in OLED display (not used by this library)</li>
+<li>Built-in USB-C connector</li>
+</ul>
+<p>You need <strong>at least two</strong> Heltec V3 boards: one acting as the <strong>gateway</strong>, the others as <strong>nodes</strong>.</p>
+<blockquote>
+<p><strong>Note:</strong> Support for additional ESP32-based LoRa boards (TTGO LoRa32, Heltec V2 and V4, etc.) is planned for future versions. The library architecture is designed to make board porting straightforward — only the pin definitions and radio init in <code>LoRaNode.h</code> need to be adapted.</p>
+</blockquote>
+<h3 id="software">Software</h3>
+<ul>
+<li><a href="https://www.arduino.cc/en/software">Arduino IDE 2.x</a> or <a href="https://platformio.org/">PlatformIO</a></li>
+<li>ESP32 board support package (Arduino: install via Board Manager, search <code>esp32</code> by Espressif)</li>
+</ul>
+<hr>
+<h2 id="library-installation">Library Installation</h2>
+<h3 id="option-a-arduino-library-manager-recommended-">Option A — Arduino Library Manager (recommended)</h3>
+<ol>
+<li>Open Arduino IDE</li>
+<li>Go to <strong>Tools → Manage Libraries</strong> (or <strong>Sketch → Include Library → Manage Libraries</strong>)</li>
+<li>Search for <code>LoRaDomo</code></li>
+<li>Click <strong>Install</strong></li>
+<li>Done — dependencies are installed automatically if prompted</li>
+</ol>
+<h3 id="option-b-arduino-ide-zip-">Option B — Arduino IDE (ZIP)</h3>
+<ol>
+<li>Download <code>LoRaDomo_v1.0.0.zip</code></li>
+<li>Open Arduino IDE</li>
+<li>Go to <strong>Sketch → Include Library → Add .ZIP Library</strong></li>
+<li>Select the downloaded ZIP</li>
+<li>Done — the library appears under <strong>Sketch → Include Library → LoRaDomo</strong></li>
+</ol>
+<h3 id="option-c-platformio">Option C — PlatformIO</h3>
+<p>Add to your <code>platformio.ini</code>:</p>
+<pre><code class="lang-ini">lib_deps =
+    https:<span class="hljs-regexp">//gi</span>thub.com<span class="hljs-regexp">/Mizar03110/</span>LoRaDomo
+</code></pre>
+<p>Or by the the Arduino registry:</p>
+<pre><code class="lang-ini"><span class="hljs-attr">lib_deps </span>=<span class="hljs-string">
+    LoRaDomo</span>
+</code></pre>
+<hr>
+<h2 id="dependencies">Dependencies</h2>
+<p>The following libraries must be installed separately:</p>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th>Install name</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RadioHead</td>
+<td><code>RadioHead</code></td>
+<td>SX1262 LoRa driver</td>
+</tr>
+<tr>
+<td>PubSubClient</td>
+<td><code>PubSubClient</code> by Nick O&#39;Leary</td>
+<td>MQTT client</td>
+</tr>
+<tr>
+<td>WebSockets</td>
+<td><code>WebSockets</code> by Markus Sattler</td>
+<td>WebSocket server</td>
+</tr>
+<tr>
+<td>ArduinoJson</td>
+<td><code>ArduinoJson</code> by Benoit Blanchon</td>
+<td>JSON for WebSocket UI</td>
+</tr>
+</tbody>
+</table>
+<p>In Arduino IDE, install each via <strong>Tools → Manage Libraries</strong>.</p>
+<p>In PlatformIO:</p>
+<pre><code class="lang-ini">lib_deps =
+<span class="hljs-symbol">    https:</span><span class="hljs-comment">//github.com/YOUR_USERNAME/LoRaDomo</span>
+    mikem/RadioHead
+    knolleary/PubSubClient
+    links2004/WebSockets
+    bblanchon/ArduinoJson
+</code></pre>
+<hr>
+<h2 id="mqtt-broker">MQTT Broker</h2>
+<p>The gateway requires a running <strong>MQTT broker</strong> on your local network.
+MQTT is a lightweight publish/subscribe messaging protocol widely used in home automation.</p>
+<p>A popular choice is <strong>Mosquitto</strong>:</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># Raspberry Pi / Debian</span>
+sudo apt install mosquitto mosquitto-clients
+sudo systemctl <span class="hljs-built_in">enable</span> mosquitto
+</code></pre>
+<p>Minimal <code>/etc/mosquitto/mosquitto.conf</code>:</p>
+<pre><code>listener <span class="hljs-number">1883</span>
+allow_anonymous <span class="hljs-keyword">false</span>
+password_file <span class="hljs-regexp">/etc/m</span>osquitto<span class="hljs-regexp">/passwd</span>
+</code></pre><p>Create a user:</p>
+<pre><code class="lang-bash">sudo mosquitto_passwd -c <span class="hljs-regexp">/etc/m</span>osquitto<span class="hljs-regexp">/passwd myuser</span>
+</code></pre>
+<p>The gateway connects to the broker and publishes sensor values on structured topics.
+Your home automation controller (Home Assistant, Jeedom, Domoticz, Node-RED, etc.) subscribes to those topics to receive data.</p>
+<hr>
+<h2 id="verify-installation">Verify Installation</h2>
+<p>Upload the <strong>Gateway</strong> example to one board and the <strong>Node</strong> example to another.
+Open the Serial Monitor (115200 baud) with debug enabled.</p>
+<p>You should see on the <strong>node</strong>:</p>
+<pre><code>[Node] <span class="hljs-keyword">begin</span>() - radio OK freq=<span class="hljs-number">868.0</span>MHz tx=<span class="hljs-number">13</span>dBm
+[Node] <span class="hljs-keyword">begin</span>() - <span class="hljs-keyword">name</span>=<span class="hljs-string">'living_room'</span> <span class="hljs-keyword">id</span>=<span class="hljs-number">0</span>x... <span class="hljs-keyword">key</span>=<span class="hljs-number">0</span>x...
+[Node] addSensor() - <span class="hljs-keyword">id</span>=<span class="hljs-number">1</span> <span class="hljs-keyword">type</span>=<span class="hljs-number">2</span> <span class="hljs-keyword">name</span>=<span class="hljs-string">'temperature'</span> <span class="hljs-built_in">interval</span>=<span class="hljs-number">30</span>s act=<span class="hljs-keyword">no</span> <span class="hljs-keyword">read</span>=<span class="hljs-keyword">no</span>
+[Node] sendNodePresent() - <span class="hljs-keyword">id</span>=<span class="hljs-number">0</span>x... <span class="hljs-keyword">name</span>=<span class="hljs-string">'living_room'</span>
+</code></pre><p>And on the <strong>gateway</strong>:</p>
+<pre><code>[<span class="hljs-name">GW</span>] begin() - name=<span class="hljs-symbol">'home</span>' mqtt=192.168.1.10 ssid=MyWifi
+[<span class="hljs-name">WiFi</span>] Connecting...
+[<span class="hljs-name">MQTT</span>] Connecting... OK
+[<span class="hljs-name">GW</span>] handleNodePresent() - node accepted: id=0x... name=<span class="hljs-symbol">'living_room</span>' rssi=-24
+[<span class="hljs-name">GW</span>] sendAckNode() - ACK_NODE -&gt; <span class="hljs-number">0</span>x...
+</code></pre><p>Open a browser and navigate to the gateway&#39;s IP address to see the web dashboard.</p>

@@ -1,0 +1,307 @@
+<h1 id="examples">Examples</h1>
+<h2 id="minimal-gateway">Minimal Gateway</h2>
+<p>The simplest possible gateway — no debug output.</p>
+<pre><code class="lang-cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">"LoRaGateway.h"</span></span>
+
+LoRaGateway gateway;
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">setup</span>() {
+    <span class="hljs-built_in">Serial</span>.<span class="hljs-built_in">begin</span>(<span class="hljs-number">115200</span>);
+    gateway.<span class="hljs-built_in">begin</span>(
+        <span class="hljs-string">"home"</span>,
+        <span class="hljs-string">"myNetworkKey"</span>,
+        <span class="hljs-string">"192.168.1.10"</span>,
+        <span class="hljs-string">"mqttuser"</span>,
+        <span class="hljs-string">"mqttpass"</span>,
+        <span class="hljs-string">"MyWiFi"</span>,
+        <span class="hljs-string">"wifipass"</span>
+    );
+}
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">loop</span>() {
+    gateway.<span class="hljs-built_in">loop</span>();
+}
+</code></pre>
+<p>The gateway will:</p>
+<ul>
+<li>Connect to WiFi and MQTT automatically (non-blocking, retries every 5s)</li>
+<li>Accept any node that presents itself with the correct key</li>
+<li>Publish sensor values to MQTT</li>
+<li>Serve the web UI at its IP address</li>
+</ul>
+<hr>
+<h2 id="minimal-node-read-only-sensors">Minimal Node — Read-Only Sensors</h2>
+<p>A node with two sensors that send values periodically. No actuator, no read callback — values are pushed manually.</p>
+<pre><code class="lang-cpp"><span class="hljs-comment">#include "LoRaNode.h"</span>
+
+LoRaNode <span class="hljs-keyword">node</span><span class="hljs-title">;
+
+#define</span> SENSOR_TEMP <span class="hljs-number">1</span>
+<span class="hljs-comment">#define SENSOR_HUM  2</span>
+
+unsigned long lastRead = <span class="hljs-number">0</span>;
+
+void setup() {
+    Serial.begin(<span class="hljs-number">115200</span>);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"bedroom"</span>);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_TEMP, TYPE_FLOAT, <span class="hljs-string">"temperature"</span>, <span class="hljs-number">60</span>);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_HUM,  TYPE_INT8,  <span class="hljs-string">"humidity"</span>,    <span class="hljs-number">60</span>);
+
+    // Pre-load initial values
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorFloat</span>(SENSOR_TEMP, <span class="hljs-number">20.0</span>f);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt8</span> (SENSOR_HUM,  <span class="hljs-number">50</span>);
+}
+
+void loop() {
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>();
+
+    // <span class="hljs-keyword">Read</span> hardware every <span class="hljs-number">10s</span> <span class="hljs-keyword">and</span> push value
+    // <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>() will handle the actual LoRa send on its <span class="hljs-number">60s</span> schedule
+    if (millis() - lastRead &gt; <span class="hljs-number">10000</span>) {
+        lastRead = millis();
+        <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorFloat</span>(SENSOR_TEMP, readDHT22Temperature());
+        <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt8</span> (SENSOR_HUM,  readDHT22Humidity());
+    }
+}
+
+float readDHT22Temperature() { /* your sensor code */ return <span class="hljs-number">0</span>; }
+int8_t readDHT22Humidity()   { /* your sensor code */ return <span class="hljs-number">0</span>; }
+</code></pre>
+<hr>
+<h2 id="node-with-read-callbacks">Node with Read Callbacks</h2>
+<p>The preferred pattern for periodic sensors: register a read callback so the library fetches the value automatically just before each LoRa transmission.</p>
+<pre><code class="lang-cpp"><span class="hljs-comment">#include "LoRaNode.h"</span>
+<span class="hljs-comment">#include &lt;DHT.h&gt;</span>
+
+LoRaNode <span class="hljs-keyword">node</span><span class="hljs-title">;
+DHT</span> dht(<span class="hljs-number">4</span>, DHT22);
+
+<span class="hljs-comment">#define SENSOR_TEMP 1</span>
+<span class="hljs-comment">#define SENSOR_HUM  2</span>
+
+// <span class="hljs-keyword">Read</span> callbacks — called automatically before each send
+float readTemperature() {
+    return dht.readTemperature();
+}
+
+int8_t readHumidity() {
+    return (int8_t)dht.readHumidity();
+}
+
+void setup() {
+    Serial.begin(<span class="hljs-number">115200</span>);
+    dht.begin();
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"kitchen"</span>, <span class="hljs-literal">true</span>);  // debug enabled
+
+    // Third argument: send interval (seconds)
+    // Fifth argument: actuator callback (nullptr = <span class="hljs-keyword">read</span>-only)
+    // Sixth argument: <span class="hljs-keyword">read</span> callback
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_TEMP, TYPE_FLOAT, <span class="hljs-string">"temperature"</span>, <span class="hljs-number">30</span>,
+                   nullptr, (void*)readTemperature);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_HUM,  TYPE_INT8,  <span class="hljs-string">"humidity"</span>,    <span class="hljs-number">60</span>,
+                   nullptr, (void*)readHumidity);
+
+    // Pre-load for the initial burst (values before first hardware <span class="hljs-keyword">read</span>)
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorFloat</span>(SENSOR_TEMP, dht.readTemperature());
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt8</span> (SENSOR_HUM,  (int8_t)dht.readHumidity());
+}
+
+void loop() {
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>();
+    // Nothing else needed — <span class="hljs-keyword">read</span> callbacks handle everything
+}
+</code></pre>
+<p>MQTT output (every 30s for temperature, 60s for humidity):</p>
+<pre><code>home/<span class="hljs-keyword">OUT</span>/kitchen/temperature  →  <span class="hljs-number">22.50</span>
+home/<span class="hljs-keyword">OUT</span>/kitchen/humidity     →  <span class="hljs-number">58</span>
+</code></pre><hr>
+<h2 id="node-with-actuator-relay-">Node with Actuator (Relay)</h2>
+<p>A node that controls a relay. The relay state is sent on change only (<code>sendInterval = 0</code>), and a callback handles incoming commands from the home automation controller.</p>
+<pre><code class="lang-cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">"LoRaNode.h"</span></span>
+
+LoRaNode node;
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> SENSOR_RELAY 1</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> RELAY_PIN    5</span>
+
+<span class="hljs-comment">// Called when gateway sends a new relay state</span>
+<span class="hljs-keyword">void</span> onRelayCommand(uint8_t sensorID, int8_t value) {
+    <span class="hljs-built_in">digitalWrite</span>(RELAY_PIN, value ? <span class="hljs-literal">HIGH</span> : <span class="hljs-literal">LOW</span>);
+
+    <span class="hljs-comment">// Confirm the new state back to the gateway</span>
+    <span class="hljs-comment">// This triggers a MSG_SENSOR back to the gateway,</span>
+    <span class="hljs-comment">// which publishes the confirmed value to MQTT</span>
+    node.sendInt8(sensorID, value);
+}
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">setup</span>() {
+    <span class="hljs-built_in">Serial</span>.<span class="hljs-built_in">begin</span>(<span class="hljs-number">115200</span>);
+    <span class="hljs-built_in">pinMode</span>(RELAY_PIN, <span class="hljs-literal">OUTPUT</span>);
+
+    node.<span class="hljs-built_in">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"garage"</span>);
+
+    <span class="hljs-comment">// sendInterval=0: send on change only</span>
+    <span class="hljs-comment">// actCallback: called when gateway sends a value</span>
+    node.addSensor(SENSOR_RELAY, TYPE_INT8, <span class="hljs-string">"light"</span>, <span class="hljs-number">0</span>,
+                   (<span class="hljs-keyword">void</span>*)onRelayCommand, nullptr);
+
+    <span class="hljs-comment">// Restore last state from EEPROM (example)</span>
+    int8_t savedState = <span class="hljs-number">0</span>; <span class="hljs-comment">// EEPROM.read(0);</span>
+    <span class="hljs-built_in">digitalWrite</span>(RELAY_PIN, savedState);
+    node.setSensorInt8(SENSOR_RELAY, savedState);
+}
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">loop</span>() {
+    node.<span class="hljs-built_in">loop</span>();
+}
+</code></pre>
+<p>To turn on the relay, publish from your controller:</p>
+<pre><code>home/<span class="hljs-keyword">IN</span>/garage/light  →  <span class="hljs-number">1</span>
+</code></pre><p>The gateway delivers the command to the node via LoRa. The node applies it, then confirms:</p>
+<pre><code>home/<span class="hljs-keyword">OUT</span>/garage/light  →  <span class="hljs-number">1</span>
+</code></pre><hr>
+<h2 id="node-with-battery-reporting">Node with Battery Reporting</h2>
+<p>On battery-powered nodes, report the battery level so it appears in the web UI and MQTT.</p>
+<pre><code class="lang-cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">"LoRaNode.h"</span></span>
+
+LoRaNode node;
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">setup</span>() {
+    <span class="hljs-built_in">Serial</span>.<span class="hljs-built_in">begin</span>(<span class="hljs-number">115200</span>);
+    node.<span class="hljs-built_in">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"garden_sensor"</span>);
+    node.addSensor(<span class="hljs-number">1</span>, TYPE_FLOAT, <span class="hljs-string">"soil_moisture"</span>, <span class="hljs-number">300</span>,
+                   nullptr, (<span class="hljs-keyword">void</span>*)readSoilMoisture);
+}
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">loop</span>() {
+    node.<span class="hljs-built_in">loop</span>();
+
+    <span class="hljs-comment">// Update battery level — published in next heartbeat (every 2 min)</span>
+    node._battery = readBatteryPercent();
+}
+
+<span class="hljs-keyword">float</span> readSoilMoisture() {
+    <span class="hljs-keyword">int</span> raw = <span class="hljs-built_in">analogRead</span>(<span class="hljs-number">34</span>);
+    <span class="hljs-built_in">return</span> <span class="hljs-built_in">map</span>(raw, <span class="hljs-number">4095</span>, <span class="hljs-number">1500</span>, <span class="hljs-number">0</span>, <span class="hljs-number">100</span>);  <span class="hljs-comment">// calibrate to your sensor</span>
+}
+
+uint8_t readBatteryPercent() {
+    <span class="hljs-keyword">float</span> voltage = <span class="hljs-built_in">analogRead</span>(<span class="hljs-number">1</span>) * <span class="hljs-number">3.3</span>f / <span class="hljs-number">4095.0</span>f * <span class="hljs-number">2.0</span>f;  <span class="hljs-comment">// voltage divider</span>
+    <span class="hljs-built_in">return</span> <span class="hljs-built_in">constrain</span>((<span class="hljs-keyword">int</span>)((voltage - <span class="hljs-number">3.0</span>f) / (<span class="hljs-number">4.2</span>f - <span class="hljs-number">3.0</span>f) * <span class="hljs-number">100.0</span>f), <span class="hljs-number">0</span>, <span class="hljs-number">100</span>);
+}
+</code></pre>
+<p>The battery level is published to:</p>
+<pre><code>home/<span class="hljs-keyword">OUT</span>/garden_sensor/battery  →  <span class="hljs-number">87</span>
+</code></pre><p>And displayed in the web UI next to the node name.</p>
+<hr>
+<h2 id="node-with-multiple-sensor-types">Node with Multiple Sensor Types</h2>
+<p>A complete node mixing read-only sensors, an actuator, and battery reporting.</p>
+<pre><code class="lang-cpp"><span class="hljs-comment">#include "LoRaNode.h"</span>
+<span class="hljs-comment">#include &lt;DHT.h&gt;</span>
+<span class="hljs-comment">#include &lt;BH1750.h&gt;</span>
+
+LoRaNode <span class="hljs-keyword">node</span><span class="hljs-title">;
+DHT</span>    dht(<span class="hljs-number">4</span>, DHT22);
+BH1750 lightMeter;
+
+<span class="hljs-comment">#define SENSOR_TEMP  1</span>
+<span class="hljs-comment">#define SENSOR_HUM   2</span>
+<span class="hljs-comment">#define SENSOR_LUX   3</span>
+<span class="hljs-comment">#define SENSOR_RELAY 4</span>
+<span class="hljs-comment">#define RELAY_PIN    5</span>
+
+float   readTemp()  { return dht.readTemperature(); }
+int8_t  readHum()   { return (int8_t)dht.readHumidity(); }
+int32_t readLux()   { return (int32_t)lightMeter.readLightLevel(); }
+
+void onRelay(uint8_t id, int8_t value) {
+    digitalWrite(RELAY_PIN, value);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">sendInt8</span>(id, value);
+}
+
+void setup() {
+    Serial.begin(<span class="hljs-number">115200</span>);
+    dht.begin();
+    lightMeter.begin();
+    pinMode(RELAY_PIN, OUTPUT);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"living_room"</span>, <span class="hljs-literal">true</span>);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_TEMP,  TYPE_FLOAT, <span class="hljs-string">"temperature"</span>,  <span class="hljs-number">30</span>, nullptr,            (void*)readTemp);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_HUM,   TYPE_INT8,  <span class="hljs-string">"humidity"</span>,     <span class="hljs-number">60</span>, nullptr,            (void*)readHum);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_LUX,   TYPE_INT32, <span class="hljs-string">"luminosity"</span>,   <span class="hljs-number">60</span>, nullptr,            (void*)readLux);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(SENSOR_RELAY, TYPE_INT8,  <span class="hljs-string">"relay"</span>,         <span class="hljs-number">0</span>, (void*)onRelay,     nullptr);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorFloat</span>(SENSOR_TEMP,  readTemp());
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt8</span> (SENSOR_HUM,   readHum());
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt32</span>(SENSOR_LUX,   readLux());
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorInt8</span> (SENSOR_RELAY, <span class="hljs-number">0</span>);
+}
+
+void loop() {
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>();
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">_battery</span> = <span class="hljs-number">85</span>;  // replace with actual battery reading
+}
+</code></pre>
+<hr>
+<h2 id="home-assistant-integration">Home Assistant Integration</h2>
+<p>Once the gateway is running and publishing to MQTT, add sensors to Home Assistant via <code>configuration.yaml</code>:</p>
+<pre><code class="lang-yaml"><span class="hljs-attribute">mqtt</span>:
+  <span class="hljs-attribute">sensor</span>:
+    - <span class="hljs-attribute">name</span>: <span class="hljs-string">"Living Room Temperature"</span>
+      <span class="hljs-attribute">state_topic</span>: <span class="hljs-string">"home/OUT/living_room/temperature"</span>
+      <span class="hljs-attribute">unit_of_measurement</span>: <span class="hljs-string">"°C"</span>
+      <span class="hljs-attribute">device_class</span>: temperature
+
+    - <span class="hljs-attribute">name</span>: <span class="hljs-string">"Living Room Humidity"</span>
+      <span class="hljs-attribute">state_topic</span>: <span class="hljs-string">"home/OUT/living_room/humidity"</span>
+      <span class="hljs-attribute">unit_of_measurement</span>: <span class="hljs-string">"%"</span>
+      <span class="hljs-attribute">device_class</span>: humidity
+
+    - <span class="hljs-attribute">name</span>: <span class="hljs-string">"Living Room Battery"</span>
+      <span class="hljs-attribute">state_topic</span>: <span class="hljs-string">"home/OUT/living_room/battery"</span>
+      <span class="hljs-attribute">unit_of_measurement</span>: <span class="hljs-string">"%"</span>
+      <span class="hljs-attribute">device_class</span>: battery
+
+  <span class="hljs-attribute">switch</span>:
+    - <span class="hljs-attribute">name</span>: <span class="hljs-string">"Living Room Relay"</span>
+      <span class="hljs-attribute">state_topic</span>: <span class="hljs-string">"home/OUT/living_room/relay"</span>
+      <span class="hljs-attribute">command_topic</span>: <span class="hljs-string">"home/IN/living_room/relay"</span>
+      <span class="hljs-attribute">payload_on</span>: <span class="hljs-string">"1"</span>
+      <span class="hljs-attribute">payload_off</span>: <span class="hljs-string">"0"</span>
+      <span class="hljs-attribute">state_on</span>: <span class="hljs-string">"1"</span>
+      <span class="hljs-attribute">state_off</span>: <span class="hljs-string">"0"</span>
+</code></pre>
+<hr>
+<h2 id="deep-sleep-battery-saving-">Deep Sleep (Battery Saving)</h2>
+<p>For very low power applications, a node can use ESP32 deep sleep between measurements. On wake, it re-registers from scratch.</p>
+<pre><code class="lang-cpp"><span class="hljs-comment">#include "LoRaNode.h"</span>
+
+LoRaNode <span class="hljs-keyword">node</span><span class="hljs-title">;
+
+#define</span> SLEEP_SECONDS <span class="hljs-number">300</span>  // wake every <span class="hljs-number">5</span> minutes
+
+void setup() {
+    Serial.begin(<span class="hljs-number">115200</span>);
+
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"outdoor_sensor"</span>, <span class="hljs-literal">true</span>);
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">addSensor</span>(<span class="hljs-number">1</span>, TYPE_FLOAT, <span class="hljs-string">"temperature"</span>, <span class="hljs-number">0</span>);  // <span class="hljs-attr">interval=</span><span class="hljs-number">0</span>, manual send
+
+    // Pre-load value immediately
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">setSensorFloat</span>(<span class="hljs-number">1</span>, readTemperature());
+}
+
+void loop() {
+    <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>();
+
+    // Wait until REGISTERED, then send <span class="hljs-keyword">and</span> sleep
+    // The state machine handles registration automatically
+    // Check via a flag set <span class="hljs-keyword">in</span> a custom subclass, <span class="hljs-keyword">or</span> use a timeout
+}
+</code></pre>
+<blockquote>
+<p><strong>Note</strong>: Deep sleep resets the node state machine. The node always starts as <code>UNREGISTERED</code> on wake. The gateway handles re-registration gracefully since it keeps the node in its registry.</p>
+</blockquote>
