@@ -59,4 +59,4 @@ void loop() { gateway.loop(); }
 
 
 ## 📚 Full Documentation
-https://Mizar03110.github.io/LoRaDomo/
+<a href="https://mizar03110.github.io/LoRaDomo/" target="_blank">Full Documentation</a>
