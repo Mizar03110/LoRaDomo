@@ -2,6 +2,10 @@
 
 LoRa home automation library
 
+## 📚 Full Documentation
+
+[Full Documentation](https://mizar03110.github.io/LoRaDomo/)
+
 ## Features
 
 - Automatic node registration with gateway
@@ -58,6 +62,3 @@ void setup() {
 void loop() { gateway.loop(); }
 
 
-## 📚 Full Documentation
-
-[Full Documentation](https://mizar03110.github.io/LoRaDomo/)
