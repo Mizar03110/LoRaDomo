@@ -1,60 +1,27 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<title>LoRaDomo Documentation</title>
-<style>
-    body { display:flex; font-family: sans-serif; margin:0; }
-    nav { width: 200px; background:#eee; padding:10px; height:100vh; box-sizing:border-box; }
-    nav a { display:block; margin:5px 0; text-decoration:none; color:#333; }
-    nav a.active { font-weight:bold; }
-    main { flex:1; padding:20px; overflow:auto; }
-</style>
+    <meta charset="UTF-8">
+    <title>LoRaDomo</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; }
+        nav { width: 200px; background: #f0f0f0; padding: 1em; }
+        main { flex: 1; padding: 1em; }
+        nav a { display: block; margin: 0.5em 0; text-decoration: none; color: #333; }
+    </style>
 </head>
 <body>
-<nav>
-    <a href="#" data-file="README.md" class="active">Home</a>
-    <a href="#" data-file="installation.md">Installation</a>
-    <a href="#" data-file="api.md">API</a>
-    <a href="#" data-file="architecture.md">Architecture</a>
-    <a href="#" data-file="examples.md">Exemples</a>
-</nav>
-<main id="content">
-    <p>Chargement…</p>
-</main>
-
-<!-- Bibliothèque Markdown -->
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script>
-const links = document.querySelectorAll('nav a');
-const content = document.getElementById('content');
-
-function loadMarkdown(file) {
-    fetch(file)
-        .then(res => {
-            if (!res.ok) throw new Error('Fichier introuvable');
-            return res.text();
-        })
-        .then(md => {
-            content.innerHTML = marked.parse(md);
-        })
-        .catch(err => {
-            content.innerHTML = `<p style="color:red;">Erreur : ${err.message}</p>`;
-        });
-}
-
-// Menu clic
-links.forEach(a => {
-    a.addEventListener('click', e => {
-        e.preventDefault();
-        links.forEach(l => l.classList.remove('active'));
-        a.classList.add('active');
-        loadMarkdown(a.dataset.file);
-    });
-});
-
-// Charger Home par défaut
-loadMarkdown('README.md');
-</script>
+    <nav>
+        <a href="index.html">Home</a>
+        <a href="installation.html">Installation</a>
+        <a href="api.html">API</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="examples.html">Examples</a>
+    </nav>
+    <main>
+        <h1>LoRaDomo</h1>
+        <p>Bienvenue sur la documentation de LoRaDomo.</p>
+        <!-- Tu peux copier-coller ici le contenu de ton README.md en HTML -->
+    </main>
 </body>
 </html>
