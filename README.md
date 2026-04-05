@@ -59,4 +59,5 @@ void loop() { gateway.loop(); }
 
 
 ## 📚 Full Documentation
-<a href="https://mizar03110.github.io/LoRaDomo/" target="_blank">Full Documentation</a>
+
+[Full Documentation](https://mizar03110.github.io/LoRaDomo/)
