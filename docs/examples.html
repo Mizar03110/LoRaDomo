@@ -164,23 +164,29 @@ LoRaNode node;
 <pre><code>home/<span class="hljs-keyword">OUT</span>/garage/light  →  <span class="hljs-number">1</span>
 </code></pre><hr>
 <h2 id="node-with-battery-reporting">Node with Battery Reporting</h2>
-<p>On battery-powered nodes, report the battery level so it appears in the web UI and MQTT.</p>
+<p>On battery-powered nodes, register a battery callback so the library reads the ADC automatically before each heartbeat. The example below works on all supported boards using <code>#ifdef</code> for the control pin.</p>
 <pre><code class="lang-cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">"LoRaNode.h"</span></span>
 
 LoRaNode node;
 
-<span class="hljs-keyword">void</span> <span class="hljs-built_in">setup</span>() {
-    <span class="hljs-built_in">Serial</span>.<span class="hljs-built_in">begin</span>(<span class="hljs-number">115200</span>);
-    node.<span class="hljs-built_in">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"garden_sensor"</span>);
-    node.addSensor(<span class="hljs-number">1</span>, TYPE_FLOAT, <span class="hljs-string">"soil_moisture"</span>, <span class="hljs-number">300</span>,
-                   nullptr, (<span class="hljs-keyword">void</span>*)readSoilMoisture);
-}
-
-<span class="hljs-keyword">void</span> <span class="hljs-built_in">loop</span>() {
-    node.<span class="hljs-built_in">loop</span>();
-
-    <span class="hljs-comment">// Update battery level — published in next heartbeat (every 2 min)</span>
-    node._battery = readBatteryPercent();
+<span class="hljs-comment">// Called automatically before each heartbeat</span>
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">myBattery</span>(<span class="hljs-keyword">bool</span>&amp; isUSB, <span class="hljs-keyword">uint8_t</span>&amp; battery) {
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> LORA_BAT_CTRL_PIN</span>
+    <span class="hljs-built_in">pinMode</span>(LORA_BAT_CTRL_PIN, OUTPUT);
+    <span class="hljs-built_in">digitalWrite</span>(LORA_BAT_CTRL_PIN, LOW);
+    <span class="hljs-built_in">delay</span>(<span class="hljs-number">5</span>);
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+    <span class="hljs-keyword">float</span> adc = (<span class="hljs-built_in">analogRead</span>(LORA_BAT_PIN) / <span class="hljs-number">4095.0</span>f) * LORA_BAT_VREF;
+    <span class="hljs-keyword">float</span> v   = adc * LORA_BAT_DIV;
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> LORA_BAT_CTRL_PIN</span>
+    <span class="hljs-built_in">digitalWrite</span>(LORA_BAT_CTRL_PIN, HIGH);
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+    isUSB = (v &gt; <span class="hljs-number">4.3</span>f);
+    <span class="hljs-keyword">if</span> (isUSB) { battery = <span class="hljs-number">100</span>; <span class="hljs-keyword">return</span>; }
+    <span class="hljs-keyword">float</span> pct = (v - <span class="hljs-number">3.0</span>f) / (<span class="hljs-number">4.2</span>f - <span class="hljs-number">3.0</span>f) * <span class="hljs-number">100.0</span>f;
+    <span class="hljs-keyword">if</span> (pct &lt; <span class="hljs-number">0.0</span>f) pct = <span class="hljs-number">0.0</span>f;
+    <span class="hljs-keyword">if</span> (pct &gt; <span class="hljs-number">100.0</span>f) pct = <span class="hljs-number">100.0</span>f;
+    battery = (<span class="hljs-keyword">uint8_t</span>)pct;
 }
 
 <span class="hljs-keyword">float</span> readSoilMoisture() {
@@ -188,12 +194,19 @@ LoRaNode node;
     <span class="hljs-built_in">return</span> <span class="hljs-built_in">map</span>(raw, <span class="hljs-number">4095</span>, <span class="hljs-number">1500</span>, <span class="hljs-number">0</span>, <span class="hljs-number">100</span>);  <span class="hljs-comment">// calibrate to your sensor</span>
 }
 
-uint8_t readBatteryPercent() {
-    <span class="hljs-keyword">float</span> voltage = <span class="hljs-built_in">analogRead</span>(<span class="hljs-number">1</span>) * <span class="hljs-number">3.3</span>f / <span class="hljs-number">4095.0</span>f * <span class="hljs-number">2.0</span>f;  <span class="hljs-comment">// voltage divider</span>
-    <span class="hljs-built_in">return</span> <span class="hljs-built_in">constrain</span>((<span class="hljs-keyword">int</span>)((voltage - <span class="hljs-number">3.0</span>f) / (<span class="hljs-number">4.2</span>f - <span class="hljs-number">3.0</span>f) * <span class="hljs-number">100.0</span>f), <span class="hljs-number">0</span>, <span class="hljs-number">100</span>);
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">setup</span>() {
+    <span class="hljs-built_in">Serial</span>.<span class="hljs-built_in">begin</span>(<span class="hljs-number">115200</span>);
+    node.<span class="hljs-built_in">begin</span>(<span class="hljs-string">"myNetworkKey"</span>, <span class="hljs-string">"garden_sensor"</span>);
+    node.<span class="hljs-built_in">setBatteryCallback</span>(myBattery);
+    node.addSensor(<span class="hljs-number">1</span>, TYPE_FLOAT, <span class="hljs-string">"soil_moisture"</span>, <span class="hljs-number">300</span>,
+                   nullptr, (<span class="hljs-keyword">void</span>*)readSoilMoisture);
+}
+
+<span class="hljs-keyword">void</span> <span class="hljs-built_in">loop</span>() {
+    node.<span class="hljs-built_in">loop</span>();
 }
 </code></pre>
-<p>The battery level is published to:</p>
+<p>The battery level and USB status are published on each heartbeat:</p>
 <pre><code>home/<span class="hljs-keyword">OUT</span>/garden_sensor/battery  →  <span class="hljs-number">87</span>
 </code></pre><p>And displayed in the web UI next to the node name.</p>
 <hr>
@@ -243,7 +256,7 @@ void setup() {
 
 void loop() {
     <span class="hljs-keyword">node</span>.<span class="hljs-title">loop</span>();
-    <span class="hljs-keyword">node</span>.<span class="hljs-title">_battery</span> = <span class="hljs-number">85</span>;  // replace with actual battery reading
+    <span class="hljs-comment">// battery is read automatically via setBatteryCallback()</span>
 }
 </code></pre>
 <hr>

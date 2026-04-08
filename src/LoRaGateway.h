@@ -43,10 +43,11 @@ private:
     const unsigned long _wifiRetryInterval = 5000UL;
     const unsigned long _mqttRetryInterval = 5000UL;
 
-    bool _webStarted       = false;
-    bool _debug            = false;
-    bool _nvsDirty         = false;   // set true when registry needs saving
-    bool _bootBroadcastDone = false;  // send MSG_GATEWAY_BOOT once from loop()
+    bool _webStarted        = false;
+    bool _debug             = false;
+    bool _nvsDirty          = false;  // set true when registry needs saving
+    bool _wsDirty           = false;  // set true when WS state needs broadcasting
+    bool _bootBroadcastDone = false;  // send MSG_REQUEST_REFRESH once from loop()
     unsigned long _lastWsPing = 0;
     const unsigned long _wsPingInterval = 2000UL;
 
@@ -66,12 +67,14 @@ private:
     };
 
     struct NodeInfo {
-        uint32_t id           = 0;
-        char     name[NAME_LEN + 1] = {};
+        uint32_t id                    = 0;
+        char     name[NAME_LEN + 1]    = {};
+        char     boardName[NAME_LEN + 1] = {};  // e.g. "Heltec V3"
         int      rssi         = 0;
         float    snr          = 0.0f;
         uint32_t latency      = 0;
         uint8_t  battery      = 0;
+        bool     isUSB        = true;  // true if node powered by USB
         uint32_t uptime       = 0;
         uint32_t lastSeen     = 0;
         bool     online       = false;
@@ -94,6 +97,22 @@ private:
     void updateNodeStats(uint32_t id, int rssi, float snr);
     void checkTimeouts();
     void updateOfflineDurations();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MQTT publish queue — all publishes are deferred to loop() context
+    // to avoid FreeRTOS semaphore violations from LoRa handler stack
+    // ═══════════════════════════════════════════════════════════════════════
+    struct MqttMessage {
+        char  topic[96]   = {};
+        char  payload[32] = {};
+        bool  retained    = false;
+    };
+
+    MqttMessage _mqttQueue[MAX_MQTT_QUEUE];
+    uint8_t     _mqttQueueLen = 0;
+
+    void enqueueMqtt(const char* topic, const char* payload, bool retained);
+    void flushMqttQueue();
 
     // ═══════════════════════════════════════════════════════════════════════
     // Actuator pending queue
@@ -163,7 +182,7 @@ private:
     Preferences _prefs;
     void loadFromNVS();
     void saveToNVS();
-    void sendGatewayBoot();
+    void sendRequestRefresh();
 
     void setupWebServer();
     void handleWsEvent(uint8_t num, WStype_t type,

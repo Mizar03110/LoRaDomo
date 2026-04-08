@@ -53,7 +53,7 @@
 <li>The network key (hashed) acts as <strong>shared secret</strong> — frames with a wrong key are silently discarded</li>
 <li>Registration is <strong>non-blocking</strong> — the node continues to loop() normally during the process</li>
 </ul>
-<p>When the <strong>gateway reboots</strong>, it broadcasts <code>MSG_GATEWAY_BOOT</code>. All nodes receive this and reset to <code>UNREGISTERED</code>, re-registering automatically. The gateway reloads its node/sensor registry from NVS (flash) so it already knows the node names and sensor definitions before they re-register.</p>
+<p>When the <strong>gateway reboots</strong>, it broadcasts <code>MSG_REQUEST_REFRESH</code>. Nodes that are already registered respond by resending all their current sensor values — <strong>without resetting their state machine</strong>. The gateway reloads its node/sensor registry from NVS before sending, so it already knows node names and sensor definitions. The same <code>MSG_REQUEST_REFRESH</code> is also sent each time a new WebSocket client connects, so late-joining browsers receive the current state immediately.</p>
 <hr>
 <h2 id="frame-structure">Frame Structure</h2>
 <p>Every LoRa frame starts with a fixed header:</p>
@@ -142,9 +142,9 @@
 </tr>
 <tr>
 <td>0x0B</td>
-<td>MSG_GATEWAY_BOOT</td>
+<td>MSG_REQUEST_REFRESH</td>
 <td>GW → All</td>
-<td>Gateway has rebooted</td>
+<td>Request all nodes to resend current sensor values</td>
 </tr>
 </tbody>
 </table>
@@ -183,7 +183,8 @@
 <p>The gateway stores its node and sensor registry in the ESP32 <strong>NVS</strong> (Non-Volatile Storage) flash partition. This means node names and sensor definitions survive a gateway reboot without requiring the nodes to re-present themselves.</p>
 <p>Stored per node: ID, name, sensor count.
 Stored per sensor: ID, data type, name.</p>
-<p>Dynamic data (last sensor values, battery, online/offline durations) is <strong>not persisted</strong> — it is refreshed from the nodes after reboot via the <code>MSG_GATEWAY_BOOT</code> broadcast.</p>
+<p>Dynamic data (last sensor values, battery, online/offline durations) is <strong>not persisted</strong> — it is refreshed from the nodes after reboot via <code>MSG_REQUEST_REFRESH</code>.</p>
+<p>NVS writes are <strong>optimized</strong>: they only occur when new nodes or sensors are discovered. Heartbeats and sensor value updates do not trigger NVS writes, preventing flash wear and FreeRTOS timing issues under load.</p>
 <hr>
 <h2 id="security">Security</h2>
 <p>Security is based on a <strong>shared network key</strong>. The key string is hashed with FNV-1a into a 16-bit value stored in every frame header. Frames with a non-matching key are silently discarded by all receivers.</p>
@@ -214,18 +215,7 @@ Stored per sensor: ID, data type, name.</p>
 <td>Spreading factor</td>
 <td>7 (SF128)</td>
 </tr>
-<tr>
-<td>TX power</td>
-<td>13 dBm</td>
-</tr>
-<tr>
-<td>TCXO voltage</td>
-<td>3.3 V</td>
-</tr>
-<tr>
-<td>TCXO delay</td>
-<td>100 µs</td>
-</tr>
 </tbody>
 </table>
-<p>These parameters are fixed for Heltec V3 and defined in <code>LoRaNode.h</code>. All nodes and the gateway must use the same parameters — they do by using the same library.</p>
+<p>TX power depends on the board: 17 dBm (V2, TTGO V1), 13 dBm (V3), 22 dBm (V4).</p>
+<p>All nodes and the gateway must use the same frequency and modem config — they do by default since all use the same library.</p>

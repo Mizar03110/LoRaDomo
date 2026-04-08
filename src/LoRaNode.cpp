@@ -2,6 +2,63 @@
 #include "LoRaNode.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Radio configuration — public setters
+// ─────────────────────────────────────────────────────────────────────────────
+void LoRaNode::setFrequency(float freq) {
+    _frequency = freq;
+    radio.setFrequency(freq);
+    if (_debug) Serial.printf("[Node] setFrequency() - %.1f MHz\n", freq);
+}
+
+void LoRaNode::setTxPower(int dbm) {
+    _txPower = dbm;
+    radio.setTxPower(dbm);
+    if (_debug) Serial.printf("[Node] setTxPower() - %d dBm\n", dbm);
+}
+
+void LoRaNode::setModemConfig(LoRaModemConfig config) {
+    _modemConfig = config;
+    applyModemConfig();
+    if (_debug) Serial.printf("[Node] setModemConfig() - config=%d\n", config);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal radio init — called from begin() and setters
+// ─────────────────────────────────────────────────────────────────────────────
+void LoRaNode::applyRadioConfig() {
+#if defined(LORADOMO_USE_SX1276)
+    radio.setFrequency(_frequency);
+    radio.setTxPower(_txPower);
+    applyModemConfig();
+#else
+    radio.setTCXO(3.3f, 100);
+    radio.setFrequency(_frequency);
+    radio.setTxPower(_txPower);
+    applyModemConfig();
+#endif
+}
+
+void LoRaNode::applyModemConfig() {
+#if defined(LORADOMO_USE_SX1276)
+    // RH_RF95 modem configs
+    switch (_modemConfig) {
+        case MODEM_BW125_CR45_SF128:  radio.setModemConfig(RH_RF95::Bw125Cr45Sf128);   break;
+        case MODEM_BW500_CR45_SF128:  radio.setModemConfig(RH_RF95::Bw500Cr45Sf128);   break;
+        case MODEM_BW31_CR48_SF512:   radio.setModemConfig(RH_RF95::Bw31_25Cr48Sf512); break;
+        case MODEM_BW125_CR48_SF4096: radio.setModemConfig(RH_RF95::Bw125Cr48Sf4096);  break;
+    }
+#else
+    // RH_SX126x modem configs
+    switch (_modemConfig) {
+        case MODEM_BW125_CR45_SF128:  radio.setModemConfig(RH_SX126x::LoRa_Bw125Cr45Sf128);   break;
+        case MODEM_BW500_CR45_SF128:  radio.setModemConfig(RH_SX126x::LoRa_Bw500Cr45Sf128);   break;
+        case MODEM_BW31_CR48_SF512:   radio.setModemConfig(RH_SX126x::LoRa_Bw31_25Cr48Sf512); break;
+        case MODEM_BW125_CR48_SF4096: radio.setModemConfig(RH_SX126x::LoRa_Bw125Cr48Sf4096);  break;
+    }
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Key hashing : FNV-1a XOR-folded to 16 bits
 // ─────────────────────────────────────────────────────────────────────────────
 uint16_t LoRaNode::hashKey(const char* key) {
@@ -18,7 +75,14 @@ uint16_t LoRaNode::hashKey(const char* key) {
 // ─────────────────────────────────────────────────────────────────────────────
 void LoRaNode::begin(const char* key, const char* nodeName, bool debug) {
     _debug = debug;
-    _nodeID = (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF);
+    // Use full 64-bit EFuse MAC hashed to 32 bits via FNV-1a
+    // — avoids duplicates when lower 32 bits are identical (common on ESP32 V1/V2)
+    uint64_t mac = ESP.getEfuseMac();
+    uint32_t lo  = (uint32_t)(mac & 0xFFFFFFFF);
+    uint32_t hi  = (uint32_t)(mac >> 32);
+    // XOR-fold and mix both halves
+    _nodeID = lo ^ (hi * 2654435761UL);  // Knuth multiplicative hash
+    if (_nodeID == 0) _nodeID = 0xDEADBEEF;  // safety: avoid zero ID
     _key    = hashKey(key);
 
     strncpy(_nodeName, nodeName, NAME_LEN);
@@ -27,13 +91,10 @@ void LoRaNode::begin(const char* key, const char* nodeName, bool debug) {
     if (!radio.init()) {
         if (_debug) Serial.println("[Node] begin() - ERROR radio init failed");
     }
-    radio.setTCXO(3.3f, 100);
-    radio.setFrequency(LORA_FREQ);
-    radio.setTxPower(LORA_TX_DB);
-    radio.setModemConfig(RH_SX126x::LoRa_Bw125Cr45Sf128);
+    applyRadioConfig();
 
-    if (_debug) Serial.printf("[Node] begin() - radio OK freq=%.1fMHz tx=%ddBm\n",
-                  LORA_FREQ, LORA_TX_DB);
+    if (_debug) Serial.printf("[Node] begin() - board=%s radio OK freq=%.1fMHz tx=%ddBm\n",
+                  LORADOMO_BOARD_NAME, _frequency, _txPower);
 
     _state              = STATE_UNREGISTERED;
     _justRegistered     = false;
@@ -215,6 +276,8 @@ void LoRaNode::sendNodePresent() {
     p.nodeID = _nodeID;
     strncpy(p.name, _nodeName, NAME_LEN);
     p.name[NAME_LEN] = '\0';
+    strncpy(p.boardName, LORADOMO_BOARD_NAME, NAME_LEN);
+    p.boardName[NAME_LEN] = '\0';
     sendFrame(MSG_NODE_PRESENT, 0, &p, sizeof(p), false);
 }
 
@@ -230,12 +293,21 @@ void LoRaNode::sendSensorPresent(uint8_t idx) {
     sendFrame(MSG_SENSOR_PRESENT, 0, &p, sizeof(p), false);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// setBatteryCallback — register user callback for battery status
+// ─────────────────────────────────────────────────────────────────────────────
+void LoRaNode::setBatteryCallback(BatteryReadCallback cb) {
+    _batteryCallback = cb;
+}
+
 void LoRaNode::sendHeartbeat() {
-    if (_debug) Serial.printf("[Node] sendHeartbeat() - battery=%d%% uptime=%lums\n",
-                  _battery, millis());
+    if (_batteryCallback) _batteryCallback(_isUSB, _battery);
+    if (_debug) Serial.printf("[Node] sendHeartbeat() - battery=%d%% isUSB=%d uptime=%lums\n",
+                  _battery, _isUSB, millis());
     PayloadHeartbeat p;
     p.nodeID  = _nodeID;
     p.battery = _battery;
+    p.isUSB   = _isUSB ? 1 : 0;
     p.uptime  = millis();
     sendFrame(MSG_HEARTBEAT, 0, &p, sizeof(p), false);
 }
@@ -316,7 +388,7 @@ void LoRaNode::handleIncoming() {
         case MSG_ACK_SENSOR:  handleAckSensor (payload, payloadLen); break;
         case MSG_ACTUATOR:    handleActuator  (payload, payloadLen); break;
         case MSG_REBOOT:      handleReboot    (payload, payloadLen); break;
-        case MSG_GATEWAY_BOOT: handleGatewayBoot(); break;
+        case MSG_REQUEST_REFRESH: handleRequestRefresh(); break;
         default: break;
     }
 }
@@ -456,6 +528,25 @@ void LoRaNode::handleGatewayBoot() {
     _lastSensorAttempt  = 0;
     _currentSensorIdx   = 0;
     _justRegistered     = false;
+}
+
+void LoRaNode::handleRequestRefresh() {
+    if (_debug) Serial.println("[Node] handleRequestRefresh() - sending heartbeat + all sensor values");
+
+    if (_state != STATE_REGISTERED) {
+        if (_debug) Serial.println("[Node] handleRequestRefresh() - not registered, ignored");
+        return;
+    }
+
+    // Send heartbeat first for battery level
+    if (_enableHeartbeat) sendHeartbeat();
+
+    // Send current values of all sensors that have a value
+    for (uint8_t i = 0; i < _sensorCount; i++) {
+        if (_sensors[i].acked && _sensors[i].hasValue) {
+            transmitSensor(_sensors[i]);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

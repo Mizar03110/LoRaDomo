@@ -121,12 +121,76 @@
 </code></pre>
 <p>Must be called on every iteration of the Arduino <code>loop()</code>. Handles:</p>
 <ul>
-<li>Incoming frame reception (ACKs, actuator commands, reboot, gateway boot)</li>
+<li>Incoming frame reception (ACKs, actuator commands, reboot, request refresh)</li>
 <li>Registration state machine (node present, sensor present retries)</li>
 <li>Auto-send for interval-based sensors</li>
 <li>Read callback invocation before sends</li>
+<li>Battery callback invocation before each heartbeat</li>
 <li>Heartbeat transmission</li>
 </ul>
+<hr>
+<h3 id="-setbatterycallback-"><code>setBatteryCallback()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setBatteryCallback</span><span class="hljs-params">(BatteryReadCallback cb)</span></span>;
+</code></pre>
+<p>Registers a function called automatically before each heartbeat to read the battery level and USB status.</p>
+<pre><code class="lang-cpp"><span class="hljs-keyword">typedef</span> <span class="hljs-function"><span class="hljs-keyword">void</span> (*<span class="hljs-title">BatteryReadCallback</span>)<span class="hljs-params">(<span class="hljs-keyword">bool</span>&amp; isUSB, <span class="hljs-keyword">uint8_t</span>&amp; battery)</span></span>;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>isUSB</code></td>
+<td>Set to <code>true</code> if the node is USB-powered (charger IC raises VBAT above 4.3V).</td>
+</tr>
+<tr>
+<td><code>battery</code></td>
+<td>Battery level 0–100%.</td>
+</tr>
+</tbody>
+</table>
+<p>If not registered, defaults are used: <code>isUSB = true</code>, <code>battery = 100</code>.</p>
+<p><strong>Board-compatible example</strong> (works on V2, V3, V4, TTGO V1 — uses <code>#ifdef</code> for the control pin):</p>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">myBattery</span><span class="hljs-params">(<span class="hljs-keyword">bool</span>&amp; isUSB, <span class="hljs-keyword">uint8_t</span>&amp; battery)</span> </span>{
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> LORA_BAT_CTRL_PIN</span>
+    <span class="hljs-built_in">pinMode</span>(LORA_BAT_CTRL_PIN, OUTPUT);
+    <span class="hljs-built_in">digitalWrite</span>(LORA_BAT_CTRL_PIN, LOW);
+    <span class="hljs-built_in">delay</span>(<span class="hljs-number">5</span>);
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+    <span class="hljs-keyword">float</span> adc = (<span class="hljs-built_in">analogRead</span>(LORA_BAT_PIN) / <span class="hljs-number">4095.0</span>f) * LORA_BAT_VREF;
+    <span class="hljs-keyword">float</span> v   = adc * LORA_BAT_DIV;
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> LORA_BAT_CTRL_PIN</span>
+    <span class="hljs-built_in">digitalWrite</span>(LORA_BAT_CTRL_PIN, HIGH);
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+    isUSB = (v &gt; <span class="hljs-number">4.3</span>f);
+    <span class="hljs-keyword">if</span> (isUSB) { battery = <span class="hljs-number">100</span>; <span class="hljs-keyword">return</span>; }
+    <span class="hljs-keyword">float</span> pct = (v - <span class="hljs-number">3.0</span>f) / (<span class="hljs-number">4.2</span>f - <span class="hljs-number">3.0</span>f) * <span class="hljs-number">100.0</span>f;
+    <span class="hljs-keyword">if</span> (pct &lt; <span class="hljs-number">0.0</span>f) pct = <span class="hljs-number">0.0</span>f;
+    <span class="hljs-keyword">if</span> (pct &gt; <span class="hljs-number">100.0</span>f) pct = <span class="hljs-number">100.0</span>f;
+    battery = (<span class="hljs-keyword">uint8_t</span>)pct;
+}
+
+<span class="hljs-comment">// In setup(), after begin():</span>
+node.<span class="hljs-built_in">setBatteryCallback</span>(myBattery);
+</code></pre>
+<hr>
+<h3 id="-setfrequency-settxpower-setmodemconfig-"><code>setFrequency()</code> / <code>setTxPower()</code> / <code>setModemConfig()</code></h3>
+<pre><code class="lang-cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setFrequency</span><span class="hljs-params">(<span class="hljs-keyword">float</span> freq)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setTxPower</span><span class="hljs-params">(<span class="hljs-keyword">int</span> dbm)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">setModemConfig</span><span class="hljs-params">(LoRaModemConfig config)</span></span>;
+</code></pre>
+<p>Override the board defaults for frequency, TX power, and modem configuration. Call after <code>begin()</code>, before the first <code>loop()</code>. All nodes and the gateway must use the same settings.</p>
+<pre><code class="lang-cpp"><span class="hljs-class"><span class="hljs-keyword">enum</span> <span class="hljs-title">LoRaModemConfig</span> : <span class="hljs-title">uint8_t</span> {</span>
+    MODEM_BW125_CR45_SF128  = <span class="hljs-number">0</span>,  <span class="hljs-comment">// default — balanced range/speed</span>
+    MODEM_BW500_CR45_SF128  = <span class="hljs-number">1</span>,  <span class="hljs-comment">// fast, shorter range</span>
+    MODEM_BW31_CR48_SF512   = <span class="hljs-number">2</span>,  <span class="hljs-comment">// slow, longer range</span>
+    MODEM_BW125_CR48_SF4096 = <span class="hljs-number">3</span>   <span class="hljs-comment">// max range, very slow</span>
+};
+</code></pre>
 <hr>
 <h3 id="protected-members-accessible-from-subclasses-">Protected members (accessible from subclasses)</h3>
 <table>
@@ -141,7 +205,12 @@
 <tr>
 <td><code>_battery</code></td>
 <td><code>uint8_t</code></td>
-<td>Battery level 0–100%. Set from user code to report battery in heartbeat.</td>
+<td>Battery level 0–100%. Overridden by <code>setBatteryCallback()</code> if registered.</td>
+</tr>
+<tr>
+<td><code>_isUSB</code></td>
+<td><code>bool</code></td>
+<td>USB power status. Overridden by <code>setBatteryCallback()</code> if registered.</td>
 </tr>
 <tr>
 <td><code>_heartbeatInterval</code></td>
@@ -372,45 +441,83 @@
 </tbody>
 </table>
 <hr>
-<h2 id="radio-constants-loranode-h-">Radio Constants (LoRaNode.h)</h2>
+<h2 id="board-pin-constants-boards-h-">Board Pin Constants (boards.h)</h2>
+<p>Pin and radio constants are defined per board and set automatically. Values below are for reference:</p>
 <table>
 <thead>
 <tr>
 <th>Constant</th>
-<th>Value</th>
+<th>V2 / TTGO V1</th>
+<th>V3 / V4</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>LORA_CS</code></td>
+<td>18</td>
 <td>8</td>
-<td>SPI Chip Select pin</td>
-</tr>
-<tr>
-<td><code>LORA_DIO1</code></td>
-<td>14</td>
-<td>DIO1 interrupt pin</td>
-</tr>
-<tr>
-<td><code>LORA_BUSY</code></td>
-<td>13</td>
-<td>Busy signal pin</td>
+<td>SPI Chip Select</td>
 </tr>
 <tr>
 <td><code>LORA_RST</code></td>
+<td>14</td>
 <td>12</td>
-<td>Reset pin</td>
+<td>Reset</td>
+</tr>
+<tr>
+<td><code>LORA_DIO0</code></td>
+<td>26</td>
+<td>—</td>
+<td>IRQ (SX1276 only)</td>
+</tr>
+<tr>
+<td><code>LORA_DIO1</code></td>
+<td>—</td>
+<td>14</td>
+<td>IRQ (SX1262 only)</td>
+</tr>
+<tr>
+<td><code>LORA_BUSY</code></td>
+<td>—</td>
+<td>13</td>
+<td>Busy (SX1262 only)</td>
 </tr>
 <tr>
 <td><code>LORA_FREQ</code></td>
+<td>868.0 MHz</td>
 <td>868.0 MHz</td>
 <td>Operating frequency</td>
 </tr>
 <tr>
 <td><code>LORA_TX_DB</code></td>
-<td>13 dBm</td>
+<td>17 dBm</td>
+<td>13 dBm (V3) / 22 dBm (V4)</td>
 <td>Transmit power</td>
+</tr>
+<tr>
+<td><code>LORA_BAT_PIN</code></td>
+<td>13</td>
+<td>1</td>
+<td>ADC pin for battery voltage</td>
+</tr>
+<tr>
+<td><code>LORA_BAT_CTRL_PIN</code></td>
+<td>—</td>
+<td>37</td>
+<td>Pull LOW to enable battery ADC</td>
+</tr>
+<tr>
+<td><code>LORA_BAT_VREF</code></td>
+<td>3.3 V</td>
+<td>3.3 V</td>
+<td>ADC reference voltage</td>
+</tr>
+<tr>
+<td><code>LORA_BAT_DIV</code></td>
+<td>2.0</td>
+<td>2.0</td>
+<td>Voltage divider ratio</td>
 </tr>
 </tbody>
 </table>

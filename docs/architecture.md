@@ -77,7 +77,7 @@ The inclusion mechanism ensures that:
 - The network key (hashed) acts as **shared secret** — frames with a wrong key are silently discarded
 - Registration is **non-blocking** — the node continues to loop() normally during the process
 
-When the **gateway reboots**, it broadcasts `MSG_GATEWAY_BOOT`. All nodes receive this and reset to `UNREGISTERED`, re-registering automatically. The gateway reloads its node/sensor registry from NVS (flash) so it already knows the node names and sensor definitions before they re-register.
+When the **gateway reboots**, it broadcasts `MSG_REQUEST_REFRESH`. Nodes that are already registered respond by resending all their current sensor values — **without resetting their state machine**. The gateway reloads its node/sensor registry from NVS before sending, so it already knows node names and sensor definitions. The same `MSG_REQUEST_REFRESH` is also sent each time a new WebSocket client connects, so late-joining browsers receive the current state immediately.
 
 ---
 
@@ -113,7 +113,7 @@ Every LoRa frame starts with a fixed header:
 | 0x08 | MSG_REBOOT | GW → Node | Reboot command |
 | 0x09 | MSG_ACTUATOR | GW → Node | Set sensor/actuator value |
 | 0x0A | MSG_ACK_ACTUATOR | Node → GW | Acknowledge actuator |
-| 0x0B | MSG_GATEWAY_BOOT | GW → All | Gateway has rebooted |
+| 0x0B | MSG_REQUEST_REFRESH | GW → All | Request all nodes to resend current sensor values |
 
 ---
 
@@ -168,7 +168,9 @@ The gateway stores its node and sensor registry in the ESP32 **NVS** (Non-Volati
 Stored per node: ID, name, sensor count.
 Stored per sensor: ID, data type, name.
 
-Dynamic data (last sensor values, battery, online/offline durations) is **not persisted** — it is refreshed from the nodes after reboot via the `MSG_GATEWAY_BOOT` broadcast.
+Dynamic data (last sensor values, battery, online/offline durations) is **not persisted** — it is refreshed from the nodes after reboot via `MSG_REQUEST_REFRESH`.
+
+NVS writes are **optimized**: they only occur when new nodes or sensors are discovered. Heartbeats and sensor value updates do not trigger NVS writes, preventing flash wear and FreeRTOS timing issues under load.
 
 ---
 
@@ -182,14 +184,15 @@ This provides basic network isolation (multiple LoRaDomo networks can coexist on
 
 ## LoRa Radio Parameters
 
+Default parameters (can be overridden with `setFrequency()`, `setTxPower()`, `setModemConfig()`):
+
 | Parameter | Value |
 |-----------|-------|
 | Frequency | 868.0 MHz (Europe) |
 | Bandwidth | 125 kHz |
 | Coding rate | 4/5 |
 | Spreading factor | 7 (SF128) |
-| TX power | 13 dBm |
-| TCXO voltage | 3.3 V |
-| TCXO delay | 100 µs |
 
-These parameters are fixed for Heltec V3 and defined in `LoRaNode.h`. All nodes and the gateway must use the same parameters — they do by using the same library.
+TX power depends on the board: 17 dBm (V2, TTGO V1), 13 dBm (V3), 22 dBm (V4).
+
+All nodes and the gateway must use the same frequency and modem config — they do by default since all use the same library.

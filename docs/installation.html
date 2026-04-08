@@ -1,17 +1,49 @@
 <h1 id="installation">Installation</h1>
 <h2 id="requirements">Requirements</h2>
 <h3 id="hardware">Hardware</h3>
-<p>LoRaDomo currently supports the <strong>Heltec WiFi LoRa 32 V3</strong> board, which features:</p>
-<ul>
-<li>ESP32-S3 microcontroller</li>
-<li>SX1262 LoRa transceiver (pre-wired, no external wiring needed)</li>
-<li>Built-in OLED display (not used by this library)</li>
-<li>Built-in USB-C connector</li>
-</ul>
-<p>You need <strong>at least two</strong> Heltec V3 boards: one acting as the <strong>gateway</strong>, the others as <strong>nodes</strong>.</p>
-<blockquote>
-<p><strong>Note:</strong> Support for additional ESP32-based LoRa boards (TTGO LoRa32, Heltec V2 and V4, etc.) is planned for future versions. The library architecture is designed to make board porting straightforward — only the pin definitions and radio init in <code>LoRaNode.h</code> need to be adapted.</p>
-</blockquote>
+<p>LoRaDomo supports the following ESP32 LoRa boards out of the box — all pins are pre-configured, no wiring needed:</p>
+<table>
+<thead>
+<tr>
+<th>Board</th>
+<th>MCU</th>
+<th>Radio</th>
+<th>UI name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Heltec WiFi LoRa 32 V2</td>
+<td>ESP32</td>
+<td>SX1276</td>
+<td>"Heltec V2"</td>
+</tr>
+<tr>
+<td>Heltec WiFi LoRa 32 V3</td>
+<td>ESP32-S3</td>
+<td>SX1262</td>
+<td>"Heltec V3"</td>
+</tr>
+<tr>
+<td>Heltec WiFi LoRa 32 V4</td>
+<td>ESP32-S3</td>
+<td>SX1262</td>
+<td>"Heltec V4"</td>
+</tr>
+<tr>
+<td>TTGO LoRa32 V1</td>
+<td>ESP32</td>
+<td>SX1276</td>
+<td>"TTGO V1"</td>
+</tr>
+</tbody>
+</table>
+<p>You need <strong>at least two</strong> supported boards: one acting as the <strong>gateway</strong>, the others as <strong>nodes</strong>. Boards can be mixed freely on the same network.</p>
+<p>The board is <strong>auto-detected</strong> from your IDE or PlatformIO board selection. If auto-detection fails, add one of these defines in your sketch <strong>before</strong> any <code>#include</code>:</p>
+<pre><code class="lang-cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> LORADOMO_HELTEC_V2</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> LORADOMO_HELTEC_V3   <span class="hljs-comment">// or LORADOMO_HELTEC_V4</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> LORADOMO_TTGO_V1</span>
+</code></pre>
 <h3 id="software">Software</h3>
 <ul>
 <li><a href="https://www.arduino.cc/en/software">Arduino IDE 2.x</a> or <a href="https://platformio.org/">PlatformIO</a></li>
@@ -29,7 +61,7 @@
 </ol>
 <h3 id="option-b-arduino-ide-zip-">Option B — Arduino IDE (ZIP)</h3>
 <ol>
-<li>Download <code>LoRaDomo_v1.0.0.zip</code></li>
+<li>Download <code>LoRaDomo_v1.1.0.zip</code></li>
 <li>Open Arduino IDE</li>
 <li>Go to <strong>Sketch → Include Library → Add .ZIP Library</strong></li>
 <li>Select the downloaded ZIP</li>

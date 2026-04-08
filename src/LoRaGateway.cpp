@@ -53,10 +53,10 @@ void LoRaGateway::begin(const char* gatewayName,
 // loop
 // ─────────────────────────────────────────────────────────────────────────────
 void LoRaGateway::loop() {
-    // Send GATEWAY_BOOT broadcast once from loop() - safe FreeRTOS context
+    // Send REQUEST_REFRESH broadcast once from loop() - safe FreeRTOS context
     if (!_bootBroadcastDone) {
         _bootBroadcastDone = true;
-        sendGatewayBoot();
+        sendRequestRefresh();
     }
 
     connectWiFi();
@@ -85,6 +85,15 @@ void LoRaGateway::loop() {
         _nvsDirty = false;
         saveToNVS();
     }
+
+    // Broadcast WS state from main loop context (safe for FreeRTOS)
+    if (_wsDirty) {
+        _wsDirty = false;
+        broadcastState();
+    }
+
+    // Flush MQTT publish queue from main loop context
+    flushMqttQueue();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,6 +369,8 @@ void LoRaGateway::handleNodePresent(const uint8_t* payload, uint8_t len,
 
     strncpy(n->name, p.name, NAME_LEN);
     n->name[NAME_LEN] = '\0';
+    strncpy(n->boardName, p.boardName, NAME_LEN);
+    n->boardName[NAME_LEN] = '\0';
     n->rssi     = rssi;
     n->snr      = snr;
     n->lastSeen = millis();
@@ -376,7 +387,7 @@ void LoRaGateway::handleNodePresent(const uint8_t* payload, uint8_t len,
 
     _nvsDirty = true;
     sendAckNode(p.nodeID);
-    broadcastState();
+    _wsDirty = true;
 }
 
 void LoRaGateway::handleSensorPresent(const uint8_t* payload, uint8_t len) {
@@ -413,7 +424,7 @@ void LoRaGateway::handleSensorPresent(const uint8_t* payload, uint8_t len) {
 
     _nvsDirty = true;
     sendAckSensor(p.nodeID, p.sensorID);
-    broadcastState();
+    _wsDirty = true;
 }
 
 void LoRaGateway::handleSensor(const uint8_t* payload, uint8_t len,
@@ -456,9 +467,8 @@ void LoRaGateway::handleSensor(const uint8_t* payload, uint8_t len,
         publishNodeStatus(*n, "online");
     }
 
-    _nvsDirty = true;
     publishSensorValue(*n, *s);
-    broadcastState();
+    _wsDirty = true;
 }
 
 void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
@@ -478,11 +488,12 @@ void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
     }
 
     n->battery  = p.battery;
+    n->isUSB    = (p.isUSB != 0);
     n->uptime   = p.uptime;
     n->lastSeen = millis();
 
-    if (_debug) Serial.printf("[GW] handleHeartbeat() - node='%s' battery=%d%% uptime=%lums\n",
-                  n->name, p.battery, p.uptime);
+    if (_debug) Serial.printf("[GW] handleHeartbeat() - node='%s' battery=%d%% isUSB=%d uptime=%lums\n",
+                  n->name, p.battery, p.isUSB, p.uptime);
 
     // Update online duration using node uptime from heartbeat
     if (n->online) {
@@ -495,11 +506,9 @@ void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
         char batVal[8];
         snprintf(batTopic, sizeof(batTopic), "%s/OUT/%s/battery", _gatewayName, n->name);
         snprintf(batVal,   sizeof(batVal),   "%d", n->battery);
-        _mqtt.publish(batTopic, batVal, false);
+        enqueueMqtt(batTopic, batVal, false);
         if (_debug) Serial.printf("[GW] handleHeartbeat() - battery topic='%s' val='%s'\n", batTopic, batVal);
     }
-
-    _nvsDirty = true;
 
     if (!n->online) {
         if (_debug) Serial.printf("[GW] handleHeartbeat() - node '%s' back online\n", n->name);
@@ -509,7 +518,7 @@ void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
         publishNodeStatus(*n, "online");
     }
 
-    broadcastState();
+    _wsDirty = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -606,9 +615,35 @@ void LoRaGateway::checkTimeouts() {
             snprintf(_nodes[i].offlineDuration, sizeof(_nodes[i].offlineDuration), "just now");
             snprintf(_nodes[i].onlineDuration,  sizeof(_nodes[i].onlineDuration),  "");
             publishNodeStatus(_nodes[i], "offline");
-            broadcastState();
+            _wsDirty = true;
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MQTT queue — safe deferred publishing from loop() context
+// ─────────────────────────────────────────────────────────────────────────────
+void LoRaGateway::enqueueMqtt(const char* topic, const char* payload, bool retained) {
+    if (_mqttQueueLen >= MAX_MQTT_QUEUE) {
+        if (_debug) Serial.println("[GW] enqueueMqtt() - queue full, dropped");
+        return;
+    }
+    MqttMessage& m = _mqttQueue[_mqttQueueLen++];
+    strncpy(m.topic,   topic,   sizeof(m.topic)   - 1);
+    strncpy(m.payload, payload, sizeof(m.payload) - 1);
+    m.retained = retained;
+}
+
+void LoRaGateway::flushMqttQueue() {
+    if (_mqttQueueLen == 0) return;
+    if (!_mqtt.connected()) { _mqttQueueLen = 0; return; }
+
+    for (uint8_t i = 0; i < _mqttQueueLen; i++) {
+        _mqtt.publish(_mqttQueue[i].topic, _mqttQueue[i].payload, _mqttQueue[i].retained);
+        if (_debug) Serial.printf("[GW] flushMqttQueue() - topic='%s' val='%s'\n",
+                                  _mqttQueue[i].topic, _mqttQueue[i].payload);
+    }
+    _mqttQueueLen = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -621,7 +656,7 @@ void LoRaGateway::publishNodeStatus(const NodeInfo& n, const char* status) {
     // Publish 1 for online, 0 for offline
     const char* val = (strcmp(status, "online") == 0) ? "1" : "0";
     if (_debug) Serial.printf("[GW] publishNodeStatus() - topic='%s' val='%s'\n", topic, val);
-    _mqtt.publish(topic, val, true);
+    enqueueMqtt(topic, val, true);
 }
 
 void LoRaGateway::publishSensorValue(const NodeInfo& n, const SensorInfo& s) {
@@ -640,7 +675,7 @@ void LoRaGateway::publishSensorValue(const NodeInfo& n, const SensorInfo& s) {
     }
 
     if (_debug) Serial.printf("[GW] publishSensorValue() - topic='%s' val='%s'\n", topic, valStr);
-    _mqtt.publish(topic, valStr, false);
+    enqueueMqtt(topic, valStr, false);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -780,19 +815,22 @@ function render(s) {
     return `
     <div class="card">
       <div class="card-header">
-        <div style="display:flex;align-items:center;gap:.5rem">
-          <span class="node-name">${n.name}</span>
-          <span class="badge ${n.online?'online':'offline'}">${dur}</span>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <span class="node-name">${n.name}</span>
+            <span class="badge ${n.online?'online':'offline'}">${dur}</span>
+          </div>
+          ${n.boardName ? `<span style="font-size:.68rem;color:#64748b;font-weight:500">${n.boardName}</span>` : ''}
         </div>
         <div class="node-meta">
           <span>ID&nbsp;${'0x'+n.id.toString(16).padStart(8,'0').toUpperCase()}</span>
           <span>RSSI&nbsp;${n.rssi}&nbsp;dBm</span>
           <span>SNR&nbsp;${Number(n.snr).toFixed(1)}&nbsp;dB</span>
-          <span>&#x1F50B;&nbsp;${n.battery}%</span>
+          <span>${n.isUSB ? '&#x1F50C;&nbsp;USB' : '&#x1F50B;&nbsp;' + n.battery + '%'}</span>
         </div>
         <div class="actions">
-          <button class="btn-reboot" onclick="sendCmd({cmd:'reboot_node',id:${n.id}})">&#x21BA; Reboot</button>
-          <button class="btn-delete" onclick="sendCmd({cmd:'delete_node',id:${n.id}})">&#x1F5D1; Delete</button>
+          <button class="btn-reboot" onclick="sendCmd({cmd:'reboot_node',id:'${n.id}'})">&#x21BA; Reboot</button>
+          <button class="btn-delete" onclick="sendCmd({cmd:'delete_node',id:'${n.id}'})">&#x1F5D1; Delete</button>
         </div>
       </div>
       ${n.sensors && n.sensors.length > 0 ? `
@@ -828,6 +866,7 @@ void LoRaGateway::handleWsEvent(uint8_t num, WStype_t type,
         case WStype_CONNECTED:
             if (_debug) Serial.printf("[WS] Client #%u connected\n", num);
             { String s = buildStateJson(); _ws.sendTXT(num, s); }
+            sendRequestRefresh();
             break;
 
         case WStype_TEXT: {
@@ -844,11 +883,13 @@ void LoRaGateway::handleWsEvent(uint8_t num, WStype_t type,
                 ESP.restart();
 
             } else if (strcmp(cmd, "reboot_node") == 0) {
-                uint32_t id = doc["id"] | 0;
+                const char* idStr = doc["id"].as<const char*>();
+                uint32_t id = idStr ? strtoul(idStr, nullptr, 16) : 0;
                 if (id) sendReboot(id);
 
             } else if (strcmp(cmd, "delete_node") == 0) {
-                uint32_t id = doc["id"] | 0;
+                const char* idStr = doc["id"].as<const char*>();
+                uint32_t id = idStr ? strtoul(idStr, nullptr, 16) : 0;
                 if (id) {
                     NodeInfo* n = getNode(id);
                     if (n) {
@@ -887,10 +928,10 @@ static void formatDuration(uint32_t ms, char* buf, size_t bufSize) {
     else            snprintf(buf, bufSize, "%lus", (unsigned long)s);
 }
 
-void LoRaGateway::sendGatewayBoot() {
-    if (_debug) Serial.println("[GW] sendGatewayBoot() - broadcasting MSG_GATEWAY_BOOT");
+void LoRaGateway::sendRequestRefresh() {
+    if (_debug) Serial.println("[GW] sendRequestRefresh() - broadcasting MSG_REQUEST_REFRESH");
     // No payload needed — just header broadcast
-    sendFrame(MSG_GATEWAY_BOOT, 0, nullptr, 0, false);
+    sendFrame(MSG_REQUEST_REFRESH, 0, nullptr, 0, false);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1021,7 +1062,7 @@ void LoRaGateway::loadFromNVS() {
 
     _prefs.end();
 }
-
+ 
 // ─────────────────────────────────────────────────────────────────────────────
 // Build JSON state
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1029,19 +1070,43 @@ String LoRaGateway::buildStateJson() {
     JsonDocument doc;
     doc["gateway"] = _gatewayName;
 
-    JsonArray nodesArr = doc["nodes"].to<JsonArray>();
+    // Collect non-empty nodes and sort by name
+    NodeInfo* nodesList[MAX_NODES];
+    uint8_t nodeCount = 0;
 
     for (int i = 0; i < MAX_NODES; i++) {
-        const NodeInfo& n = _nodes[i];
-        if (n.id == 0) continue;
+        if (_nodes[i].id != 0) {
+            nodesList[nodeCount++] = &_nodes[i];
+        }
+    }
+
+    // Sort nodes by name alphabetically (bubble sort)
+    for (int i = 0; i < nodeCount - 1; i++) {
+        for (int j = i + 1; j < nodeCount; j++) {
+            if (strcmp(nodesList[i]->name, nodesList[j]->name) > 0) {
+                NodeInfo* temp = nodesList[i];
+                nodesList[i] = nodesList[j];
+                nodesList[j] = temp;
+            }
+        }
+    }
+
+    JsonArray nodesArr = doc["nodes"].to<JsonArray>();
+
+    for (int i = 0; i < nodeCount; i++) {
+        const NodeInfo& n = *nodesList[i];
 
         JsonObject nObj = nodesArr.add<JsonObject>();
-        nObj["id"]      = n.id;
-        nObj["name"]    = n.name;
+        char idStr[12];
+        snprintf(idStr, sizeof(idStr), "0x%08X", n.id);
+        nObj["id"]      = idStr;
+        nObj["name"]      = n.name;
+        nObj["boardName"] = n.boardName;
         nObj["online"]  = n.online;
         nObj["rssi"]    = n.rssi;
         nObj["snr"]     = serialized(String(n.snr, 1));
         nObj["battery"]      = n.battery;
+        nObj["isUSB"]        = n.isUSB;
         nObj["uptime"]       = n.uptime;
         nObj["onlineDuration"]  = n.onlineDuration;
         nObj["offlineDuration"] = n.offlineDuration;

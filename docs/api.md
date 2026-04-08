@@ -104,11 +104,80 @@ void loop();
 ```
 
 Must be called on every iteration of the Arduino `loop()`. Handles:
-- Incoming frame reception (ACKs, actuator commands, reboot, gateway boot)
+- Incoming frame reception (ACKs, actuator commands, reboot, request refresh)
 - Registration state machine (node present, sensor present retries)
 - Auto-send for interval-based sensors
 - Read callback invocation before sends
+- Battery callback invocation before each heartbeat
 - Heartbeat transmission
+
+---
+
+### `setBatteryCallback()`
+
+```cpp
+void setBatteryCallback(BatteryReadCallback cb);
+```
+
+Registers a function called automatically before each heartbeat to read the battery level and USB status.
+
+```cpp
+typedef void (*BatteryReadCallback)(bool& isUSB, uint8_t& battery);
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `isUSB` | Set to `true` if the node is USB-powered (charger IC raises VBAT above 4.3V). |
+| `battery` | Battery level 0–100%. |
+
+If not registered, defaults are used: `isUSB = true`, `battery = 100`.
+
+**Board-compatible example** (works on V2, V3, V4, TTGO V1 — uses `#ifdef` for the control pin):
+
+```cpp
+void myBattery(bool& isUSB, uint8_t& battery) {
+#ifdef LORA_BAT_CTRL_PIN
+    pinMode(LORA_BAT_CTRL_PIN, OUTPUT);
+    digitalWrite(LORA_BAT_CTRL_PIN, LOW);
+    delay(5);
+#endif
+    float adc = (analogRead(LORA_BAT_PIN) / 4095.0f) * LORA_BAT_VREF;
+    float v   = adc * LORA_BAT_DIV;
+#ifdef LORA_BAT_CTRL_PIN
+    digitalWrite(LORA_BAT_CTRL_PIN, HIGH);
+#endif
+    isUSB = (v > 4.3f);
+    if (isUSB) { battery = 100; return; }
+    float pct = (v - 3.0f) / (4.2f - 3.0f) * 100.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    battery = (uint8_t)pct;
+}
+
+// In setup(), after begin():
+node.setBatteryCallback(myBattery);
+```
+
+---
+
+### `setFrequency()` / `setTxPower()` / `setModemConfig()`
+
+```cpp
+void setFrequency  (float freq);
+void setTxPower    (int   dbm);
+void setModemConfig(LoRaModemConfig config);
+```
+
+Override the board defaults for frequency, TX power, and modem configuration. Call after `begin()`, before the first `loop()`. All nodes and the gateway must use the same settings.
+
+```cpp
+enum LoRaModemConfig : uint8_t {
+    MODEM_BW125_CR45_SF128  = 0,  // default — balanced range/speed
+    MODEM_BW500_CR45_SF128  = 1,  // fast, shorter range
+    MODEM_BW31_CR48_SF512   = 2,  // slow, longer range
+    MODEM_BW125_CR48_SF4096 = 3   // max range, very slow
+};
+```
 
 ---
 
@@ -116,7 +185,8 @@ Must be called on every iteration of the Arduino `loop()`. Handles:
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `_battery` | `uint8_t` | Battery level 0–100%. Set from user code to report battery in heartbeat. |
+| `_battery` | `uint8_t` | Battery level 0–100%. Overridden by `setBatteryCallback()` if registered. |
+| `_isUSB` | `bool` | USB power status. Overridden by `setBatteryCallback()` if registered. |
 | `_heartbeatInterval` | `uint32_t` | Heartbeat interval in ms. Default 120000 (2 minutes). |
 | `_enableHeartbeat` | `bool` | Set to `false` to disable heartbeat. Default `true`. |
 
@@ -244,13 +314,20 @@ Real-time updates are delivered via WebSocket on port 81. The UI automatically r
 
 ---
 
-## Radio Constants (LoRaNode.h)
+## Board Pin Constants (boards.h)
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `LORA_CS` | 8 | SPI Chip Select pin |
-| `LORA_DIO1` | 14 | DIO1 interrupt pin |
-| `LORA_BUSY` | 13 | Busy signal pin |
-| `LORA_RST` | 12 | Reset pin |
-| `LORA_FREQ` | 868.0 MHz | Operating frequency |
-| `LORA_TX_DB` | 13 dBm | Transmit power |
+Pin and radio constants are defined per board and set automatically. Values below are for reference:
+
+| Constant | V2 / TTGO V1 | V3 / V4 | Description |
+|----------|--------------|---------|-------------|
+| `LORA_CS` | 18 | 8 | SPI Chip Select |
+| `LORA_RST` | 14 | 12 | Reset |
+| `LORA_DIO0` | 26 | — | IRQ (SX1276 only) |
+| `LORA_DIO1` | — | 14 | IRQ (SX1262 only) |
+| `LORA_BUSY` | — | 13 | Busy (SX1262 only) |
+| `LORA_FREQ` | 868.0 MHz | 868.0 MHz | Operating frequency |
+| `LORA_TX_DB` | 17 dBm | 13 dBm (V3) / 22 dBm (V4) | Transmit power |
+| `LORA_BAT_PIN` | 13 | 1 | ADC pin for battery voltage |
+| `LORA_BAT_CTRL_PIN` | — | 37 | Pull LOW to enable battery ADC |
+| `LORA_BAT_VREF` | 3.3 V | 3.3 V | ADC reference voltage |
+| `LORA_BAT_DIV` | 2.0 | 2.0 | Voltage divider ratio |

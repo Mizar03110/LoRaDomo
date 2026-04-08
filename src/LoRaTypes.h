@@ -6,6 +6,7 @@
 #define MAX_NODES               10
 #define MAX_SENSORS             10
 #define MAX_PENDING_ACT          5       // max actuator messages awaiting ACK
+#define MAX_MQTT_QUEUE          16       // max MQTT messages queued for deferred publish
 #define RETRY_MAX                3
 #define NAME_LEN                15       // max chars for node/sensor name (+ null)
 #define PRESENT_INTERVAL      5000UL    // retry interval for presentation frames (ms)
@@ -26,7 +27,15 @@ enum MessageType : uint8_t {
     MSG_REBOOT          = 0x08,
     MSG_ACTUATOR        = 0x09,   // gateway → node : set a sensor/actuator value
     MSG_ACK_ACTUATOR    = 0x0A,   // node → gateway : ACK for MSG_ACTUATOR
-    MSG_GATEWAY_BOOT    = 0x0B    // gateway broadcast on startup: node resets
+    MSG_REQUEST_REFRESH = 0x0B    // gateway broadcast: request all sensors to send their current values
+};
+
+// --- LoRa modem configurations
+enum LoRaModemConfig : uint8_t {
+    MODEM_BW125_CR45_SF128  = 0,  // BW 125kHz CR 4/5 SF7  — default, balanced range/speed
+    MODEM_BW500_CR45_SF128  = 1,  // BW 500kHz CR 4/5 SF7  — fast, shorter range
+    MODEM_BW31_CR48_SF512   = 2,  // BW 31kHz  CR 4/8 SF9  — slow, longer range
+    MODEM_BW125_CR48_SF4096 = 3   // BW 125kHz CR 4/8 SF12 — max range, very slow
 };
 
 // --- Sensor data types ─────────────────────────────────────────────────────
@@ -58,6 +67,7 @@ struct __attribute__((packed)) FrameHeader {
 struct __attribute__((packed)) PayloadNodePresent {
     uint32_t nodeID;
     char     name[NAME_LEN + 1];
+    char     boardName[NAME_LEN + 1];  // e.g. "Heltec V3"
 };
 
 struct __attribute__((packed)) PayloadAckNode {
@@ -89,7 +99,7 @@ struct __attribute__((packed)) PayloadActuator {
     uint8_t     dataType;
     SensorValue value;
 };
-
+ 
 struct __attribute__((packed)) PayloadAckActuator {
     uint32_t nodeID;
     uint8_t  sensorID;
@@ -98,9 +108,14 @@ struct __attribute__((packed)) PayloadAckActuator {
 struct __attribute__((packed)) PayloadHeartbeat {
     uint32_t nodeID;
     uint8_t  battery;    // 0-100 %
+    uint8_t  isUSB;      // 1 = USB powered, 0 = battery
     uint32_t uptime;     // ms
 };
 
 struct __attribute__((packed)) PayloadReboot {
     uint32_t nodeID;
+};
+
+struct __attribute__((packed)) PayloadRequestRefresh {
+    uint32_t nodeID;  // 0xFFFFFFFF for broadcast
 };

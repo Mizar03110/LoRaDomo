@@ -194,25 +194,31 @@ home/OUT/garage/light  →  1
 
 ## Node with Battery Reporting
 
-On battery-powered nodes, report the battery level so it appears in the web UI and MQTT.
+On battery-powered nodes, register a battery callback so the library reads the ADC automatically before each heartbeat. The example below works on all supported boards using `#ifdef` for the control pin.
 
 ```cpp
 #include "LoRaNode.h"
 
 LoRaNode node;
 
-void setup() {
-    Serial.begin(115200);
-    node.begin("myNetworkKey", "garden_sensor");
-    node.addSensor(1, TYPE_FLOAT, "soil_moisture", 300,
-                   nullptr, (void*)readSoilMoisture);
-}
-
-void loop() {
-    node.loop();
-
-    // Update battery level — published in next heartbeat (every 2 min)
-    node._battery = readBatteryPercent();
+// Called automatically before each heartbeat
+void myBattery(bool& isUSB, uint8_t& battery) {
+#ifdef LORA_BAT_CTRL_PIN
+    pinMode(LORA_BAT_CTRL_PIN, OUTPUT);
+    digitalWrite(LORA_BAT_CTRL_PIN, LOW);
+    delay(5);
+#endif
+    float adc = (analogRead(LORA_BAT_PIN) / 4095.0f) * LORA_BAT_VREF;
+    float v   = adc * LORA_BAT_DIV;
+#ifdef LORA_BAT_CTRL_PIN
+    digitalWrite(LORA_BAT_CTRL_PIN, HIGH);
+#endif
+    isUSB = (v > 4.3f);
+    if (isUSB) { battery = 100; return; }
+    float pct = (v - 3.0f) / (4.2f - 3.0f) * 100.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    battery = (uint8_t)pct;
 }
 
 float readSoilMoisture() {
@@ -220,13 +226,20 @@ float readSoilMoisture() {
     return map(raw, 4095, 1500, 0, 100);  // calibrate to your sensor
 }
 
-uint8_t readBatteryPercent() {
-    float voltage = analogRead(1) * 3.3f / 4095.0f * 2.0f;  // voltage divider
-    return constrain((int)((voltage - 3.0f) / (4.2f - 3.0f) * 100.0f), 0, 100);
+void setup() {
+    Serial.begin(115200);
+    node.begin("myNetworkKey", "garden_sensor");
+    node.setBatteryCallback(myBattery);
+    node.addSensor(1, TYPE_FLOAT, "soil_moisture", 300,
+                   nullptr, (void*)readSoilMoisture);
+}
+
+void loop() {
+    node.loop();
 }
 ```
 
-The battery level is published to:
+The battery level and USB status are published on each heartbeat:
 ```
 home/OUT/garden_sensor/battery  →  87
 ```
@@ -284,7 +297,7 @@ void setup() {
 
 void loop() {
     node.loop();
-    node._battery = 85;  // replace with actual battery reading
+    // battery is read automatically via setBatteryCallback()
 }
 ```
 

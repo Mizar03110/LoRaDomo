@@ -4,15 +4,24 @@
 
 ### Hardware
 
-LoRaDomo currently supports the **Heltec WiFi LoRa 32 V3** board, which features:
-- ESP32-S3 microcontroller
-- SX1262 LoRa transceiver (pre-wired, no external wiring needed)
-- Built-in OLED display (not used by this library)
-- Built-in USB-C connector
+LoRaDomo supports the following ESP32 LoRa boards out of the box — all pins are pre-configured, no wiring needed:
 
-You need **at least two** Heltec V3 boards: one acting as the **gateway**, the others as **nodes**.
+| Board | MCU | Radio | UI name |
+|-------|-----|-------|---------|
+| Heltec WiFi LoRa 32 V2 | ESP32 | SX1276 | "Heltec V2" |
+| Heltec WiFi LoRa 32 V3 | ESP32-S3 | SX1262 | "Heltec V3" |
+| Heltec WiFi LoRa 32 V4 | ESP32-S3 | SX1262 | "Heltec V4" |
+| TTGO LoRa32 V1 | ESP32 | SX1276 | "TTGO V1" |
 
-> **Note:** Support for additional ESP32-based LoRa boards (TTGO LoRa32, Heltec V2 and V4, etc.) is planned for future versions. The library architecture is designed to make board porting straightforward — only the pin definitions and radio init in `LoRaNode.h` need to be adapted.
+You need **at least two** supported boards: one acting as the **gateway**, the others as **nodes**. Boards can be mixed freely on the same network.
+
+The board is **auto-detected** from your IDE or PlatformIO board selection. If auto-detection fails, add one of these defines in your sketch **before** any `#include`:
+
+```cpp
+#define LORADOMO_HELTEC_V2
+#define LORADOMO_HELTEC_V3   // or LORADOMO_HELTEC_V4
+#define LORADOMO_TTGO_V1
+```
 
 ### Software
 
@@ -33,7 +42,7 @@ You need **at least two** Heltec V3 boards: one acting as the **gateway**, the o
 
 ### Option B — Arduino IDE (ZIP)
 
-1. Download `LoRaDomo_v1.0.0.zip`
+1. Download `LoRaDomo_v1.1.0.zip`
 2. Open Arduino IDE
 3. Go to **Sketch → Include Library → Add .ZIP Library**
 4. Select the downloaded ZIP
