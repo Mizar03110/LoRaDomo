@@ -21,6 +21,8 @@ LoRa home automation library
 - Late-joining WebSocket clients receive current state immediately
 - Debug mode (no code change needed)
 
+![Web UI](WebUI.png)
+
 ## Dependencies
 
 Install via Arduino Library Manager or PlatformIO:
