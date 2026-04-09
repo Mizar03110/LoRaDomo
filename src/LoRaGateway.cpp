@@ -500,7 +500,7 @@ void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
         formatDuration(p.uptime, n->onlineDuration, sizeof(n->onlineDuration));
     }
 
-    // Publish battery level to MQTT
+    // Publish battery level and online status to MQTT on every heartbeat
     if (_mqtt.connected()) {
         char batTopic[96];
         char batVal[8];
@@ -509,13 +509,13 @@ void LoRaGateway::handleHeartbeat(const uint8_t* payload, uint8_t len) {
         enqueueMqtt(batTopic, batVal, false);
         if (_debug) Serial.printf("[GW] handleHeartbeat() - battery topic='%s' val='%s'\n", batTopic, batVal);
     }
+    publishNodeStatus(*n, "online");
 
     if (!n->online) {
         if (_debug) Serial.printf("[GW] handleHeartbeat() - node '%s' back online\n", n->name);
         n->online = true;
         snprintf(n->onlineDuration,  sizeof(n->onlineDuration),  "just now");
         snprintf(n->offlineDuration, sizeof(n->offlineDuration), "");
-        publishNodeStatus(*n, "online");
     }
 
     _wsDirty = true;
