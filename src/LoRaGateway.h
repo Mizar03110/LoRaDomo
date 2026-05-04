@@ -48,6 +48,8 @@ private:
     bool _nvsDirty          = false;  // set true when registry needs saving
     bool _wsDirty           = false;  // set true when WS state needs broadcasting
     bool _bootBroadcastDone = false;  // send MSG_REQUEST_REFRESH once from loop()
+    bool _gatewaySensorsInit  = false; // set true after local sensors are initialized
+    bool _mqttWasConnected    = false; // tracks previous MQTT state for reconnect detection
     unsigned long _lastWsPing = 0;
     const unsigned long _wsPingInterval = 2000UL;
 
@@ -190,4 +192,10 @@ private:
     String buildStateJson();
     void   broadcastState();
     void   handleHttpRoot();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Gateway local sensors — published via MQTT, not LoRa
+    // ═══════════════════════════════════════════════════════════════════════
+    void processGatewaySensors();
+    void transmitSensor(SensorEntry& s) override;  // publishes to MQTT
 };

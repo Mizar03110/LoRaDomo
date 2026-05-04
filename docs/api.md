@@ -252,6 +252,46 @@ Must be called on every iteration of the Arduino `loop()`. Handles:
 - Node timeout detection
 - Offline duration updates
 - NVS save when registry changes
+- **Local sensor auto-publish** (read callbacks + interval)
+
+---
+
+## Gateway Local Sensors
+
+`LoRaGateway` supports sensors attached directly to the gateway board — no LoRa involved. They use the same `addSensor()` / `setSensorXxx()` / `sendXxx()` API as `LoRaNode`.
+
+### How it works
+
+- Values are **published to MQTT** at `<gw>/OUT/<gw>/<sensor>` (using the gateway name as node name)
+- Values are **displayed in the web UI** in a dedicated "local" card
+- The controller can **send values back** via `<gw>/IN/<gw>/<sensor>` → actuator callback is called directly (no LoRa)
+- On each MQTT reconnect, all local sensor values are immediately republished
+
+### Example
+
+```cpp
+#define SENSOR_TEMP    1
+#define SENSOR_RELAY   2
+
+float readTemperature() { return analogRead(TEMP_PIN) * 0.1f; }
+
+void onRelayCommand(uint8_t id, int8_t value) {
+    digitalWrite(RELAY_PIN, value);
+    gateway.sendInt8(id, value);   // confirm → published to MQTT
+}
+
+void setup() {
+    gateway.begin("home", "key", "192.168.1.10", "user", "pass", "ssid", "pass");
+
+    gateway.addSensor(SENSOR_TEMP,  TYPE_FLOAT, "temperature", 30,
+                      nullptr, (void*)readTemperature);
+    gateway.addSensor(SENSOR_RELAY, TYPE_INT8,  "relay", 0,
+                      (void*)onRelayCommand, nullptr);
+
+    gateway.setSensorFloat(SENSOR_TEMP,  20.0f);
+    gateway.setSensorInt8 (SENSOR_RELAY, 0);
+}
+```
 
 ---
 
@@ -264,15 +304,17 @@ All topics use the gateway name as prefix.
 | Topic | Value | Retained | Description |
 |-------|-------|----------|-------------|
 | `<gw>/OUT/<gw>/status` | `1` / `0` | Yes | Gateway online (1) or offline (0). `0` is the LWT — published automatically by broker if gateway disconnects. |
-| `<gw>/OUT/<node>/status` | `1` / `0` | Yes | Node online (1) or offline (0). |
-| `<gw>/OUT/<node>/<sensor>` | number | No | Latest sensor value as a numeric string. |
+| `<gw>/OUT/<gw>/<sensor>` | number | No | **Local sensor** value. Same gateway name used as node name. |
+| `<gw>/OUT/<node>/status` | `1` / `0` | Yes | Remote node online (1) or offline (0). |
+| `<gw>/OUT/<node>/<sensor>` | number | No | Remote node sensor value. |
 | `<gw>/OUT/<node>/battery` | `0`–`100` | No | Battery level in %, published on each heartbeat. |
 
 ### Subscribed by gateway (IN)
 
 | Topic | Payload | Description |
 |-------|---------|-------------|
-| `<gw>/IN/<node>/<sensor>` | number | Send a value to a node sensor. The gateway looks up the node and sensor by name, converts the payload to the correct type, and transmits `MSG_ACTUATOR` to the node via LoRa. |
+| `<gw>/IN/<gw>/<sensor>` | number | Send a value to a **local gateway sensor**. Calls the actuator callback directly. |
+| `<gw>/IN/<node>/<sensor>` | number | Send a value to a **remote node sensor**. Forwarded via LoRa `MSG_ACTUATOR`. |
 
 ### Notes
 - `<gw>` is the gateway name passed to `begin()`
@@ -288,15 +330,22 @@ The gateway serves a single-page dashboard at `http://<gateway_ip>/`.
 
 Real-time updates are delivered via WebSocket on port 81. The UI automatically reconnects if the gateway reboots.
 
-### Displayed information per node
-- Node name and online/offline status with duration
+### Displayed information
+
+**Gateway card** (top, "local" badge):
+- Gateway name, board model, uptime ("online since…")
+- Local sensors: name, ID, data type, current value
+
+**Node cards** (one per remote LoRa node):
+- Node name, board model, online/offline status with duration
 - Chip ID, RSSI, SNR, battery level
 - Per sensor: name, ID, data type, last value
 
 ### Actions
-- **Reboot**: sends `MSG_REBOOT` to the node via LoRa
-- **Delete**: removes the node from the registry and NVS
-- **Reboot gateway**: restarts the ESP32
+- **Reboot** (node card): sends `MSG_REBOOT` to the node via LoRa
+- **Delete** (node card): removes the node from the registry and NVS
+- **Reboot gateway** (header): restarts the ESP32
+- **Delete all nodes** (header): removes all remote nodes from the registry and NVS, publishes offline status to MQTT for each
 
 ---
 

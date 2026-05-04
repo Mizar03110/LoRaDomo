@@ -1,4 +1,4 @@
-# LoRaDomo v1.1.0
+# LoRaDomo v1.2.0
 
 LoRa home automation library
 
@@ -15,9 +15,11 @@ LoRa home automation library
 - Periodic send interval per sensor (or on-change only)
 - Heartbeat with battery level and USB detection
 - Battery read callback: plug in your ADC reading, works across all boards
+- **Gateway local sensors**: add sensors directly on the gateway — published to MQTT and displayed in the web UI, no LoRa needed
 - MQTT gateway with WebSocket UI
-- Board name displayed in web UI (e.g. "Heltec V3", "TTGO V1")
+- Board name and uptime displayed in web UI
 - NVS persistence of node/sensor registry (optimized — writes only on discovery)
+- **Delete all nodes** button in web UI (clears NVS)
 - Late-joining WebSocket clients receive current state immediately
 - Debug mode (no code change needed)
 

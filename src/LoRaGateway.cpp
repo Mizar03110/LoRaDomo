@@ -75,10 +75,19 @@ void LoRaGateway::loop() {
         sendWsPing();
     }
 
+    // Detect MQTT reconnect → force re-publish of local sensor values
+    bool mqttNow = _mqtt.connected();
+    if (mqttNow && !_mqttWasConnected) {
+        for (uint8_t i = 0; i < _sensorCount; i++)
+            _sensors[i].lastSent = 0;   // reset so processGatewaySensors re-publishes all
+    }
+    _mqttWasConnected = mqttNow;
+
     handleLoRa();
     checkPendingActuators();
     checkTimeouts();
     updateOfflineDurations();
+    processGatewaySensors();
 
     // Flush NVS from main loop context (safe for FreeRTOS semaphores)
     if (_nvsDirty) {
@@ -164,7 +173,45 @@ void LoRaGateway::handleMqttIn(const char* topic,
     const char* nodeName   = rest;
     const char* sensorName = slash + 1;
 
-    // Find node by name
+    // Parse payload string (type-independent, done early for both local and remote)
+    char valStr[16] = {};
+    size_t copyLen = (len < sizeof(valStr) - 1) ? len : sizeof(valStr) - 1;
+    memcpy(valStr, payload, copyLen);
+    valStr[copyLen] = '\0';
+
+    // ── Gateway local sensors ────────────────────────────────────────────────
+    if (strncmp(nodeName, _gatewayName, NAME_LEN) == 0) {
+        for (uint8_t i = 0; i < _sensorCount; i++) {
+            SensorEntry& ls = _sensors[i];
+            if (strncmp(ls.name, sensorName, NAME_LEN) != 0) continue;
+
+            SensorValue value = {};
+            switch (ls.type) {
+                case TYPE_INT8:  value.asInt8  = (int8_t)atoi(valStr);  break;
+                case TYPE_INT32: value.asInt32 = (int32_t)atol(valStr); break;
+                case TYPE_FLOAT: value.asFloat = atof(valStr);          break;
+                default: return;
+            }
+
+            storeSensorValue(ls, &value, sizeof(value));
+
+            if (_debug) Serial.printf("[GW] handleMqttIn() - local sensor '%s' value='%s'\n",
+                          sensorName, valStr);
+
+            if (ls.actCallback) {
+                switch (ls.type) {
+                    case TYPE_INT8:  ((CallbackInt8)ls.actCallback)(ls.id, value.asInt8);   break;
+                    case TYPE_INT32: ((CallbackInt32)ls.actCallback)(ls.id, value.asInt32); break;
+                    case TYPE_FLOAT: ((CallbackFloat)ls.actCallback)(ls.id, value.asFloat); break;
+                }
+            }
+            return;
+        }
+        if (_debug) Serial.printf("[GW] handleMqttIn() - unknown local sensor '%s'\n", sensorName);
+        return;
+    }
+
+    // ── Remote LoRa node sensors ─────────────────────────────────────────────
     NodeInfo* n = nullptr;
     for (int i = 0; i < MAX_NODES; i++) {
         if (_nodes[i].id != 0 &&
@@ -178,7 +225,6 @@ void LoRaGateway::handleMqttIn(const char* topic,
         return;
     }
 
-    // Find sensor by name
     SensorInfo* s = nullptr;
     for (int i = 0; i < n->sensorCount; i++) {
         if (strncmp(n->sensors[i].name, sensorName, NAME_LEN) == 0) {
@@ -191,12 +237,6 @@ void LoRaGateway::handleMqttIn(const char* topic,
                       sensorName, nodeName);
         return;
     }
-
-    // Parse value from payload (null-terminate first)
-    char valStr[16] = {};
-    size_t copyLen = (len < sizeof(valStr) - 1) ? len : sizeof(valStr) - 1;
-    memcpy(valStr, payload, copyLen);
-    valStr[copyLen] = '\0';
 
     SensorValue value = {};
     switch ((DataType)s->dataType) {
@@ -651,6 +691,7 @@ void LoRaGateway::flushMqttQueue() {
 // ─────────────────────────────────────────────────────────────────────────────
 void LoRaGateway::publishNodeStatus(const NodeInfo& n, const char* status) {
     if (!_mqtt.connected()) return;
+    if (n.name[0] == '\0') return;   // FIX: skip nodes with empty name
     char topic[96];
     snprintf(topic, sizeof(topic), "%s/OUT/%s/status", _gatewayName, n.name);
     // Publish 1 for online, 0 for offline
@@ -727,6 +768,8 @@ void LoRaGateway::handleHttpRoot() {
   .btn-reboot{background:#1d4ed8;color:#fff}
   .btn-delete{background:#991b1b;color:#fff}
   .btn-gw{background:#7c3aed;color:#fff;padding:.4rem .9rem;font-size:.8rem}
+  .btn-gw-del{background:#7f1d1d;color:#fff;padding:.4rem .9rem;font-size:.8rem;border:none;border-radius:.4rem;cursor:pointer;font-weight:600;transition:opacity .15s}
+  .btn-gw-del:hover{opacity:.8}
   table{width:100%;border-collapse:collapse;font-size:.8rem}
   th{text-align:left;padding:.5rem 1rem;color:#94a3b8;font-weight:500;border-bottom:1px solid #334155}
   td{padding:.5rem 1rem;border-bottom:1px solid #1e293b}
@@ -742,6 +785,7 @@ void LoRaGateway::handleHttpRoot() {
   <div style="display:flex;align-items:center;gap:.75rem">
     <span id="ws-status" class="ws-err">Gateway offline</span>
     <button class="btn-gw" onclick="sendCmd({cmd:'reboot_gw'})">&#x21BA; Reboot gateway</button>
+    <button class="btn-gw-del" onclick="if(confirm('Delete all nodes from NVS?'))sendCmd({cmd:'delete_all_nodes'})">&#x1F5D1; Delete all nodes</button>
   </div>
 </header>
 <main id="nodes-grid"><p class="empty" style="grid-column:1/-1">Waiting for data...</p></main>
@@ -804,11 +848,37 @@ function formatVal(sensor) {
 function render(s) {
   if (s.gateway) document.getElementById('gw-name').textContent = ' ' + s.gateway;
   const grid = document.getElementById('nodes-grid');
+  let html = '';
+
+  // Gateway local sensors card
+  if (s.local_sensors && s.local_sensors.length > 0) {
+    const gwDur = s.uptime ? 'online since ' + s.uptime : 'online';
+    html += `<div class="card">
+      <div class="card-header">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <span class="node-name">${s.gateway||'Gateway'}</span>
+            <span class="badge online">local</span>
+            <span style="font-size:.72rem;color:#94a3b8">${gwDur}</span>
+          </div>
+          ${s.board ? `<span style="font-size:.68rem;color:#64748b;font-weight:500">${s.board}</span>` : ''}
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Name</th><th>ID</th><th>Type</th><th>Value</th></tr></thead>
+        <tbody>
+          ${s.local_sensors.map(ls=>`<tr><td>${ls.name}</td><td>${ls.id}</td><td>${typeLabel(ls.dataType)}</td><td>${formatVal(ls)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
   if (!s.nodes || s.nodes.length === 0) {
-    grid.innerHTML = '<p class="empty" style="grid-column:1/-1">No registered nodes</p>';
+    if (!html) html = '<p class="empty" style="grid-column:1/-1">No registered nodes</p>';
+    grid.innerHTML = html;
     return;
   }
-  grid.innerHTML = s.nodes.map(n => {
+  html += s.nodes.map(n => {
     const dur = n.online
       ? (n.onlineDuration  ? 'online since '  + n.onlineDuration  : 'online')
       : (n.offlineDuration ? 'offline since ' + n.offlineDuration : 'offline');
@@ -848,6 +918,7 @@ function render(s) {
       </table>` : '<p class="empty">No sensors</p>'}
     </div>`;
   }).join('');
+  grid.innerHTML = html;
 }
 
 connect();
@@ -898,6 +969,15 @@ void LoRaGateway::handleWsEvent(uint8_t num, WStype_t type,
                         broadcastState();
                     }
                 }
+            } else if (strcmp(cmd, "delete_all_nodes") == 0) {
+                if (_debug) Serial.println("[WS] Deleting all nodes");
+                for (int i = 0; i < MAX_NODES; i++) {
+                    if (_nodes[i].id != 0)
+                        publishNodeStatus(_nodes[i], "offline");
+                    _nodes[i] = NodeInfo{};
+                }
+                _nvsDirty = true;
+                broadcastState();
             }
             break;
         }
@@ -932,6 +1012,77 @@ void LoRaGateway::sendRequestRefresh() {
     if (_debug) Serial.println("[GW] sendRequestRefresh() - broadcasting MSG_REQUEST_REFRESH");
     // No payload needed — just header broadcast
     sendFrame(MSG_REQUEST_REFRESH, 0, nullptr, 0, false);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gateway local sensors — init, auto-send, MQTT publish
+// ─────────────────────────────────────────────────────────────────────────────
+void LoRaGateway::processGatewaySensors() {
+    if (!_gatewaySensorsInit) {
+        _gatewaySensorsInit = true;
+        _state = STATE_REGISTERED;          // bypass LoRa registration
+        for (uint8_t i = 0; i < _sensorCount; i++)
+            _sensors[i].acked = true;
+    }
+
+    if (!_mqtt.connected()) return;
+
+    uint32_t now = millis();
+    for (uint8_t i = 0; i < _sensorCount; i++) {
+        SensorEntry& s = _sensors[i];
+        if (!s.hasValue) continue;
+
+        // Publish if: never sent (initial), or periodic interval elapsed
+        bool initial  = (s.lastSent == 0);
+        bool periodic = (s.sendInterval > 0 && now - s.lastSent >= s.sendInterval * 1000UL);
+        if (initial || periodic) transmitSensor(s);
+    }
+}
+
+// Override: publish to MQTT instead of sending via LoRa
+void LoRaGateway::transmitSensor(SensorEntry& s) {
+    // Call readCallback to fetch fresh value (same behaviour as LoRaNode)
+    if (s.readCallback) {
+        switch (s.type) {
+            case TYPE_INT8: {
+                int8_t v = ((ReadCallbackInt8)s.readCallback)();
+                storeSensorValue(s, &v, sizeof(v));
+                if (_debug) Serial.printf("[GW] transmitSensor() - readCB INT8 '%s'=%d\n", s.name, v);
+                break;
+            }
+            case TYPE_INT32: {
+                int32_t v = ((ReadCallbackInt32)s.readCallback)();
+                storeSensorValue(s, &v, sizeof(v));
+                if (_debug) Serial.printf("[GW] transmitSensor() - readCB INT32 '%s'=%ld\n", s.name, (long)v);
+                break;
+            }
+            case TYPE_FLOAT: {
+                float v = ((ReadCallbackFloat)s.readCallback)();
+                storeSensorValue(s, &v, sizeof(v));
+                if (_debug) Serial.printf("[GW] transmitSensor() - readCB FLOAT '%s'=%.2f\n", s.name, v);
+                break;
+            }
+        }
+    }
+
+    s.lastSent = millis();   // always update to avoid rapid retries even if MQTT is down
+
+    if (!_mqtt.connected()) return;
+
+    char topic[96];
+    snprintf(topic, sizeof(topic), "%s/OUT/%s/%s", _gatewayName, _gatewayName, s.name);
+
+    char valStr[16];
+    switch (s.type) {
+        case TYPE_INT8:  snprintf(valStr, sizeof(valStr), "%d",   s.lastValue.asInt8);        break;
+        case TYPE_INT32: snprintf(valStr, sizeof(valStr), "%ld",  (long)s.lastValue.asInt32); break;
+        case TYPE_FLOAT: snprintf(valStr, sizeof(valStr), "%.2f", s.lastValue.asFloat);       break;
+        default: return;
+    }
+
+    if (_debug) Serial.printf("[GW] transmitSensor() - publish '%s' = '%s'\n", topic, valStr);
+    enqueueMqtt(topic, valStr, false);
+    _wsDirty = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -989,6 +1140,9 @@ void LoRaGateway::saveToNVS() {
         snprintf(key, sizeof(key), "n%d_name", ni);
         _prefs.putString(key, n.name);
 
+        snprintf(key, sizeof(key), "n%d_board", ni);
+        _prefs.putString(key, n.boardName);
+
         snprintf(key, sizeof(key), "n%d_sc", ni);
         _prefs.putUChar(key, n.sensorCount);
 
@@ -1031,6 +1185,12 @@ void LoRaGateway::loadFromNVS() {
         String name = _prefs.getString(key, "");
         strncpy(n->name, name.c_str(), NAME_LEN);
         n->name[NAME_LEN] = '\0';
+
+        snprintf(key, sizeof(key), "n%d_board", ni);
+        String board = _prefs.getString(key, "");
+        strncpy(n->boardName, board.c_str(), NAME_LEN);
+        n->boardName[NAME_LEN] = '\0';
+
         n->online    = false;
         n->offlineAt = millis();   // approximate — gateway just rebooted
         snprintf(n->offlineDuration, sizeof(n->offlineDuration), "just now");
@@ -1069,6 +1229,32 @@ void LoRaGateway::loadFromNVS() {
 String LoRaGateway::buildStateJson() {
     JsonDocument doc;
     doc["gateway"] = _gatewayName;
+    doc["board"]   = LORADOMO_BOARD_NAME;
+
+    char uptimeStr[24];
+    formatDuration(millis(), uptimeStr, sizeof(uptimeStr));
+    doc["uptime"] = uptimeStr;
+
+    // Gateway local sensors
+    if (_sensorCount > 0) {
+        JsonArray localArr = doc["local_sensors"].to<JsonArray>();
+        for (uint8_t i = 0; i < _sensorCount; i++) {
+            const SensorEntry& s = _sensors[i];
+            JsonObject sObj = localArr.add<JsonObject>();
+            sObj["id"]       = s.id;
+            sObj["name"]     = s.name;
+            sObj["dataType"] = (uint8_t)s.type;
+            sObj["hasValue"] = s.hasValue;
+            if (s.hasValue) {
+                switch (s.type) {
+                    case TYPE_INT8:  sObj["value"] = s.lastValue.asInt8;  break;
+                    case TYPE_INT32: sObj["value"] = s.lastValue.asInt32; break;
+                    case TYPE_FLOAT: sObj["value"] = serialized(String(s.lastValue.asFloat, 2)); break;
+                    default: break;
+                }
+            }
+        }
+    }
 
     // Collect non-empty nodes and sort by name
     NodeInfo* nodesList[MAX_NODES];

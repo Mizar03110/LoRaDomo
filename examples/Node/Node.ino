@@ -1,4 +1,4 @@
-// ================= example_node.ino — LoRaDomo V1.1 =================
+// ================= Node.ino — LoRaDomo V1.2 =================
 // Example node sketch for Heltec V3
 
 

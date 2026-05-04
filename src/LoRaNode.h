@@ -127,35 +127,41 @@ protected:
     int            _txPower     = LORA_TX_DB;
     LoRaModemConfig _modemConfig = MODEM_BW125_CR45_SF128;
 
-private:
-
+    // -- Node state (accessible by LoRaGateway for local sensor init) ────────
     enum NodeState : uint8_t {
         STATE_UNREGISTERED,
         STATE_REGISTERING,
         STATE_REGISTERED
     };
-
     NodeState _state = STATE_UNREGISTERED;
-    char      _nodeName[NAME_LEN + 1] = {};
 
-    // -- Sensor table ────────────────────────────────────────────────────────
+    // -- Sensor table (accessible by LoRaGateway for local sensors) ──────────
     struct SensorEntry {
         uint8_t     id                 = 0;
         DataType    type               = TYPE_FLOAT;
         char        name[NAME_LEN + 1] = {};
         bool        acked              = false;
-        void*       actCallback        = nullptr;  // actuator callback, typed via DataType
-        void*       readCallback       = nullptr;  // read callback, typed via DataType
-
+        void*       actCallback        = nullptr;
+        void*       readCallback       = nullptr;
         SensorValue lastValue          = {};
         bool        hasValue           = false;
-
-        uint32_t    sendInterval       = 0;      // seconds, 0 = on change only
-        uint32_t    lastSent           = 0;      // millis() of last send
+        uint32_t    sendInterval       = 0;
+        uint32_t    lastSent           = 0;
     };
 
     SensorEntry _sensors[MAX_SENSORS];
     uint8_t     _sensorCount = 0;
+
+    SensorEntry* findSensor(uint8_t id);
+    void         storeSensorValue(SensorEntry& s, const void* rawValue, uint8_t valSize);
+    bool         valuesEqual(const SensorEntry& s, const void* rawValue, uint8_t valSize);
+
+    // Virtual: LoRaGateway overrides this to publish via MQTT instead of LoRa
+    virtual void transmitSensor(SensorEntry& s);
+
+private:
+
+    char      _nodeName[NAME_LEN + 1] = {};
 
     uint32_t _lastPresentAttempt = 0;
     uint32_t _lastSensorAttempt  = 0;
@@ -188,12 +194,7 @@ private:
     void applyRadioConfig();
     void applyModemConfig();
 
-    // -- Helpers ─────────────────────────────────────────────────────────────
-    SensorEntry* findSensor(uint8_t id);
-    void         storeSensorValue(SensorEntry& s, const void* rawValue, uint8_t valSize);
-    bool         valuesEqual(const SensorEntry& s, const void* rawValue, uint8_t valSize);
-    void         transmitSensor(SensorEntry& s);
-    void         sendAckActuator(uint32_t nodeID, uint8_t sensorID);
+    void sendAckActuator(uint32_t nodeID, uint8_t sensorID);
 
     BatteryReadCallback _batteryCallback = nullptr;
 };

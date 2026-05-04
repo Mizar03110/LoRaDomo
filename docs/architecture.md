@@ -29,7 +29,7 @@ LoRaNode  (base class)
 
 `LoRaNode` handles all LoRa communication, the registration state machine, sensor management, heartbeat, and actuator reception.
 
-`LoRaGateway` extends `LoRaNode` with WiFi, MQTT, WebSocket UI, NVS persistence, and node/sensor registry management.
+`LoRaGateway` extends `LoRaNode` with WiFi, MQTT, WebSocket UI, NVS persistence, and node/sensor registry management. It also supports **local sensors** (sensors attached directly to the gateway board) that publish to MQTT without any LoRa involvement — using the same `addSensor()` API as remote nodes.
 
 ---
 
@@ -161,16 +161,41 @@ The gateway retries the actuator frame up to **3 times** (every 5 seconds) if th
 
 ---
 
+## Gateway Local Sensors
+
+The gateway can host its own sensors (temperature probe, relay, etc.) using the same `addSensor()` / `setSensorXxx()` / `sendXxx()` API as remote nodes. These sensors are called **local sensors**.
+
+```
+Controller  →  MQTT Broker  →  Gateway (local sensor)
+   publish         |           IN/<gw>/<s>
+ IN/<gw>/<s>       |           actCallback() called directly
+                   |
+                   |           read callback → value
+                   |           publish OUT/<gw>/<s>
+```
+
+Key differences from remote node sensors:
+- Values are published directly to MQTT (`<gw>/OUT/<gw>/<sensor>`) — no LoRa frame involved
+- Actuator commands arrive via MQTT (`<gw>/IN/<gw>/<sensor>`) and are handled locally
+- Local sensors are shown in the web UI in a dedicated **gateway card** (with board name and uptime)
+- On MQTT reconnect, all local sensor values are immediately republished
+
+Internally, `LoRaGateway` overrides `transmitSensor()` (virtual in `LoRaNode`) to publish to MQTT instead of sending a LoRa frame.
+
+---
+
 ## NVS Persistence
 
-The gateway stores its node and sensor registry in the ESP32 **NVS** (Non-Volatile Storage) flash partition. This means node names and sensor definitions survive a gateway reboot without requiring the nodes to re-present themselves.
+The gateway stores its **remote node** and sensor registry in the ESP32 **NVS** (Non-Volatile Storage) flash partition. This means node names and sensor definitions survive a gateway reboot without requiring the nodes to re-present themselves.
 
-Stored per node: ID, name, sensor count.
+Stored per node: ID, name, board name, sensor count.
 Stored per sensor: ID, data type, name.
 
 Dynamic data (last sensor values, battery, online/offline durations) is **not persisted** — it is refreshed from the nodes after reboot via `MSG_REQUEST_REFRESH`.
 
 NVS writes are **optimized**: they only occur when new nodes or sensors are discovered. Heartbeats and sensor value updates do not trigger NVS writes, preventing flash wear and FreeRTOS timing issues under load.
+
+The **Delete all nodes** button in the web UI clears the entire registry from NVS immediately.
 
 ---
 
